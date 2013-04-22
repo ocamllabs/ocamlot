@@ -1,0 +1,3 @@
+* drop root privileges after binding?
+* contrib to cohttp to hook after bind/listen for dropping privs and
+   firing HTTP callbacks?

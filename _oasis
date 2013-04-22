@@ -1,0 +1,23 @@
+OASISFormat: 0.3
+Name:        ocamlot
+Version:     0.0.0
+Synopsis:    Continuous integration and test infrastructure for OPAM packages
+Authors:     David Sheets, Thomas Gazagnaire
+License:     ISC
+Plugins:     META (0.3)
+BuildTools:  ocamlbuild
+PostConfCommand: ./init_config.sh
+
+Library ocamlot
+  Path: lib
+  Findlibname: ocamlot
+  Modules: Github_listener, Http_server, Ocamlot
+  BuildDepends: lwt, cohttp, github, re, cryptokit
+
+Executable ocamlot_server
+  Path: lib
+  MainIs: ocamlot_server.ml
+  Custom: true
+  CompiledObject: best
+  Install: false
+  BuildDepends: ocamlot
