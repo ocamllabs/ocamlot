@@ -22,6 +22,7 @@ type endpoint = {
 exception ConnectivityFailure of endpoint
 
 let secret_prefix = "ocamlot"
+let () = Random.self_init ()
 
 let hmac secret message = Cryptokit.(
   transform_string (Hexa.encode ()) (hash_string (MAC.hmac_sha1 secret) message)
@@ -47,8 +48,15 @@ let verify_event req body endpoint = Lwt.(
     | None -> return false
 )
 
+let randomish_string k =
+  let buf = String.make k '\000' in
+  let rec gen x =
+    if k=x then buf
+    else (buf.[x] <- Char.chr (Random.int 0x100); gen (x+1))
+  in gen 0
+
 let new_secret prefix = prefix ^ ":"
-  ^ Cryptokit.(transform_string (Hexa.encode ()) Random.(string secure_rng 20))
+  ^ Cryptokit.(transform_string (Hexa.encode ()) (randomish_string 20))
 
 let new_hook url = Github_t.(
   let secret = new_secret secret_prefix in {
