@@ -14,8 +14,8 @@ let github = Github.API.set_user_agent github_ua
 
 let path_seg = Re.(rep1 (compl [char '/']))
 let notify_re =
-  Re.(seq [group path_seg; char '/'; group path_seg; str "/notify"])
-let notify_subpath (user, repo) = sprintf "%s/%s/notify" user repo
+  Re.(seq [group path_seg; char '/'; group path_seg])
+let notify_uriref (user, repo) = sprintf "%s/%s?notify" user repo
 
 let watch_list = ["ocamlot","opam-repository"]
 let registry = Hashtbl.create 10
@@ -38,11 +38,12 @@ let make_listener service_fn root host port =
          >>= S.some_response)
   in
   let handler conn_id ?body req = Lwt.(
-    let path = Request.path req in
-    try
-      let endpoint = Hashtbl.find registry path in
-      Github_hook.(endpoint.handler conn_id ?body req)
-    with Not_found -> return None
+    if Request.params req <> ["notify",[]] then return None
+    else let path = Request.path req in
+         try
+           let endpoint = Hashtbl.find registry path in
+           Github_hook.(endpoint.handler conn_id ?body req)
+         with Not_found -> return None
   ) in
   let token_kp = ["github"; "token"] in
   let open Lwt in
@@ -70,7 +71,7 @@ let make_listener service_fn root host port =
         >>= fun token ->
           let github = Github.(Monad.(github >> API.set_token token)) in
           let url = Uri.resolve "http" base
-            (Uri.of_string (notify_subpath watch)) in
+            (Uri.of_string (notify_uriref watch)) in
           Github_hook.connect github registry url (watch,notification_handler)
         >>= fun endpoint -> return () (* TODO: SYNC *)
         end
