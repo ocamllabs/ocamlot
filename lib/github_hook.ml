@@ -144,5 +144,5 @@ let connect github registry url ((user,repo),handler) = Github.(Github_t.(Lwt.(
     Hook.test ~user ~repo ~num:endpoint.id ()
     >>= fun () -> return endpoint
   ))
-  >>= fun endpoint -> check_connectivity registry (Uri.path endpoint.url) 5 ()
+  >>= fun endpoint -> check_connectivity registry (Uri.path endpoint.url) 20 ()
 )))
