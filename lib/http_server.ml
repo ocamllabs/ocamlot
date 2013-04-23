@@ -22,13 +22,15 @@ type t = {
   dispatch : service_search handler;
 }
 
+let some_response resp = Lwt.return (Some resp)
+
 let not_found_service = {
   name="Default404";
   routes=Re.any;
   handler=Lwt.(fun conn_id ?body req ->
     let body = sprintf "404: Resource '%s' not found\n" (Req.path req) in
     CL.Server.respond_string ~status:`Not_found ~body ()
-    >>= fun resp -> return (Some resp)
+    >>= some_response
   );
   startup=[];
 }

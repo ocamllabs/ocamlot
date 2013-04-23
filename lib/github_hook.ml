@@ -3,6 +3,7 @@
 open Cohttp
 module CL = Cohttp_lwt_unix
 module CLB = CL.Body
+module S = Http_server
 
 type status = Indicated | Unauthorized | Pending | Connected
 
@@ -15,10 +16,9 @@ type endpoint = {
   status : status;
   last_event : Int32.t;
   github : unit Github.Monad.t;
-  handler : int -> ?body:CLB.contents -> CL.Request.t -> (CL.Response.t * CLB.t) Lwt.t
+  handler : S.response option Lwt.t S.handler;
 }
 
-exception VerificationFailure of endpoint
 exception ConnectivityFailure of endpoint
 
 let secret_prefix = "ocamlot"
@@ -26,6 +26,12 @@ let secret_prefix = "ocamlot"
 let hmac secret message = Cryptokit.(
   transform_string (Hexa.encode ()) (hash_string (MAC.hmac_sha1 secret) message)
 )
+
+let verification_failure = Lwt.(
+  CL.Server.respond_string
+    ~status:`Forbidden
+    ~body:"403: Forbidden (Request verification failure)" ()
+  >>= S.some_response)
 
 let verify_event req body endpoint = Lwt.(
   match CL.Request.header req "x-hub-signature" with
@@ -70,25 +76,34 @@ let endpoint_of_hook github hook user repo handler = Github_t.(
     github;
   })
 
+let verify_before endpoint = fun conn_id ?body req -> Lwt.(
+  verify_event req body endpoint
+  >>= function
+    | true -> endpoint.handler conn_id ?body req
+    | false -> verification_failure
+)
+
 let register registry endpoint = Lwt.(
-  let handler conn_id ?body req =
+  let rec handler conn_id ?body req =
     verify_event req body endpoint
     >>= fun verified ->
     if verified then begin
       Github.Monad.run (Time.mono_msec ())
       >>= fun last_event ->
       Hashtbl.replace registry (Uri.path endpoint.url)
-        {endpoint with last_event; status=Connected}; (* handler is closed *)
+        {endpoint with handler=verify_before endpoint;
+          last_event; status=Connected};
       Printf.eprintf "SUCCESS: Hook registration of %s for %s/%s\n%!"
         (Uri.to_string endpoint.url) endpoint.user endpoint.repo;
       CL.Server.respond_string ~status:`No_content ~body:"" ()
+      >>= S.some_response
     end
     else begin
       Printf.eprintf "FAILURE: Hook registration of %s for %s/%s\n%!"
         (Uri.to_string endpoint.url) endpoint.user endpoint.repo;
       Hashtbl.replace registry (Uri.path endpoint.url)
-        {endpoint with status=Unauthorized};
-      Lwt.fail (VerificationFailure endpoint)
+        {endpoint with handler; status=Unauthorized};
+      verification_failure
     end
   in
   Hashtbl.replace registry (Uri.path endpoint.url) {endpoint with handler}

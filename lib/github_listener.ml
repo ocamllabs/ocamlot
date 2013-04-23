@@ -3,6 +3,8 @@ open Printf
 open Cohttp
 open Cohttp_lwt_unix
 
+module S = Http_server
+
 type user = string
 type repo = string
 type repo_id = user * repo
@@ -32,14 +34,14 @@ let make_listener service_fn root host port =
   let notification_handler conn_id ?body req =
     let path, (user, repo) = path_repo_id req in
     let body = sprintf "Got event for %s/%s\n" user repo in
-    Server.respond_string ~status:`OK ~body ()
+    Lwt.(Server.respond_string ~status:`OK ~body ()
+         >>= S.some_response)
   in
   let handler conn_id ?body req = Lwt.(
     let path = Request.path req in
     try
       let endpoint = Hashtbl.find registry path in
-      (Github_hook.(endpoint.handler conn_id ?body req)
-       >>= fun resp -> return (Some resp))
+      Github_hook.(endpoint.handler conn_id ?body req)
     with Not_found -> return None
   ) in
   let token_kp = ["github"; "token"] in
