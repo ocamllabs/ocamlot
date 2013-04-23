@@ -20,7 +20,7 @@ let notify_uriref (user, repo) = sprintf "%s/%s?notify" user repo
 let watch_list = ["ocamlot","opam-repository"]
 let registry = Hashtbl.create 10
 
-let make_listener service_fn root host port =
+let make_listener service_fn ~root ~host ~port =
   let base = Uri.make ~scheme:"http" ~host ~port ~path:("/"^root^"/") () in
   let routes = Re.(seq [str root; char '/'; notify_re]) in
   let path_match = Re.compile routes in
