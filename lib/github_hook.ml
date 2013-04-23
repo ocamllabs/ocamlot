@@ -42,7 +42,7 @@ let verify_event req body endpoint = Lwt.(
         if hmac_label = "sha1="
         then (CLB.string_of_body body
               >>= fun body ->
-              return (hmac_hex=(hmac (secret_prefix^":"^endpoint.secret) body))
+              return (hmac_hex=(hmac endpoint.secret body))
         )
         else return false
     | None -> return false
@@ -62,7 +62,7 @@ let new_hook url = Github_t.(
   let secret = new_secret secret_prefix in {
     new_hook_name="web";
     new_hook_active=true;
-    new_hook_events=[`PullRequest; `PullRequestReviewComment; `Status];
+    new_hook_events=[`Push; `PullRequest; `PullRequestReviewComment; `Status];
     new_hook_config={
       web_hook_config_url=Uri.to_string url;
       web_hook_config_content_type="json";
