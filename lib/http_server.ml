@@ -71,13 +71,13 @@ let run server =
   let port = server.port in
   let rec callback kfn conn_id ?body req =
     let {service; continue} = kfn conn_id ?body req in
-    let path = Req.path req in
+    let pathquery = Uri.path_and_query (Req.uri req) in
     let () = eprintf "%s for %s dispatched to %s\n%!"
-      (Code.string_of_method (Req.meth req)) path service.name in
+      (Code.string_of_method (Req.meth req)) pathquery service.name in
     Lwt.(service.handler conn_id ?body req
          >>= function
            | None -> eprintf "%s refused to service %s: continuing\n%!"
-               service.name path;
+               service.name pathquery;
                callback (fun _ ?body _ -> continue ()) conn_id ?body req
            | Some resp -> return resp)
   in
