@@ -72,7 +72,7 @@ let make_listener service_fn root host port =
           let url = Uri.resolve "http" base
             (Uri.of_string (notify_subpath watch)) in
           Github_hook.connect github registry url (watch,notification_handler)
-        >>= fun () -> return () (* TODO: SYNC *)
+        >>= fun endpoint -> return () (* TODO: SYNC *)
         end
         begin fun exn ->
           eprintf "GitHub connection failed: %s\n%!" (Printexc.to_string exn);

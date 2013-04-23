@@ -14,6 +14,7 @@ type endpoint = {
   user: string;
   repo: string;
   status : status;
+  update_event : endpoint Lwt_condition.t;
   last_event : Int32.t;
   github : unit Github.Monad.t;
   handler : S.response option Lwt.t S.handler;
@@ -34,7 +35,7 @@ let verification_failure = Lwt.(
     ~body:"403: Forbidden (Request verification failure)" ()
   >>= S.some_response)
 
-let verify_event req body endpoint = Lwt.(
+let verify_event req body secret = Lwt.(
   match CL.Request.header req "x-hub-signature" with
     | Some sign ->
         let hmac_label = Re_str.string_before sign 5 in
@@ -42,7 +43,7 @@ let verify_event req body endpoint = Lwt.(
         if hmac_label = "sha1="
         then (CLB.string_of_body body
               >>= fun body ->
-              return (hmac_hex=(hmac endpoint.secret body))
+              return (hmac_hex=(hmac secret body))
         )
         else return false
     | None -> return false
@@ -78,54 +79,61 @@ let endpoint_of_hook github hook user repo handler = Github_t.(
   in Github.Monad.return {
     id=hook.hook_id;
     url=Uri.of_string hook.hook_config.web_hook_config_url;
-    secret; user; repo; handler;
+    secret; user; repo;
+    handler=Lwt.(fun conn_id ?body req ->
+      verify_event req body secret
+      >>= function
+        | true -> handler conn_id ?body req
+        | false -> verification_failure
+    );
     status=Indicated;
+    update_event=Lwt_condition.create ();
     last_event=Int32.zero;
     github;
   })
 
-let verify_before endpoint = fun conn_id ?body req -> Lwt.(
-  verify_event req body endpoint
-  >>= function
-    | true -> endpoint.handler conn_id ?body req
-    | false -> verification_failure
-)
-
 let register registry endpoint = Lwt.(
   let rec handler conn_id ?body req =
-    verify_event req body endpoint
+    verify_event req body endpoint.secret
     >>= fun verified ->
     if verified then begin
       Github.Monad.run (Time.mono_msec ())
       >>= fun last_event ->
-      Hashtbl.replace registry (Uri.path endpoint.url)
-        {endpoint with handler=verify_before endpoint;
-          last_event; status=Connected};
+      let endpoint = { endpoint with last_event; status=Connected } in
+      Hashtbl.replace registry (Uri.path endpoint.url) endpoint;
+      Lwt_condition.broadcast endpoint.update_event endpoint;
       Printf.eprintf "SUCCESS: Hook registration of %s for %s/%s\n%!"
         (Uri.to_string endpoint.url) endpoint.user endpoint.repo;
       CL.Server.respond_string ~status:`No_content ~body:"" ()
       >>= S.some_response
     end
     else begin
+      let endpoint = { endpoint with handler; status=Unauthorized } in
       Printf.eprintf "FAILURE: Hook registration of %s for %s/%s\n%!"
         (Uri.to_string endpoint.url) endpoint.user endpoint.repo;
-      Hashtbl.replace registry (Uri.path endpoint.url)
-        {endpoint with handler; status=Unauthorized};
+      Hashtbl.replace registry (Uri.path endpoint.url) endpoint;
+      Lwt_condition.broadcast endpoint.update_event endpoint;
       verification_failure
     end
   in
   Hashtbl.replace registry (Uri.path endpoint.url) {endpoint with handler}
 )
 
-let rec check_connectivity registry path k () =
-  let endpoint = Hashtbl.find registry path in
-  if k < 1 then begin
-    Hashtbl.replace registry path {endpoint with status=Unauthorized};
+let check_connectivity registry endpoint timeout_s = Lwt.(choose [
+  Lwt_unix.sleep timeout_s
+  >>= begin fun () ->
+    let endpoint = {endpoint with status=Unauthorized} in
+    Hashtbl.replace registry (Uri.path endpoint.url) endpoint;
+    Lwt_condition.broadcast endpoint.update_event endpoint;
     Lwt.fail (ConnectivityFailure endpoint)
-  end else if endpoint.status=Connected
-    then Lwt.(return ())
-    else Lwt.((Lwt_unix.sleep 0.1)
-              >>= (check_connectivity registry path (k-1)))
+  end;
+  let rec wait endpoint =
+    Lwt_condition.wait endpoint.update_event
+    >>= fun endpoint ->
+    if endpoint.status=Connected then Lwt.(return ())
+    else wait endpoint
+  in wait endpoint
+])
 
 let connect github registry url ((user,repo),handler) = Github.(Github_t.(Lwt.(
   Monad.(run (
@@ -139,10 +147,12 @@ let connect github registry url ((user,repo),handler) = Github.(Github_t.(Lwt.(
               Hook.create ~user ~repo ~hook ()
               >>= fun h -> endpoint_of_hook github h user repo handler
     end
-    >>= fun endpoint ->
-    register registry {endpoint with status=Pending};
-    Hook.test ~user ~repo ~num:endpoint.id ()
-    >>= fun () -> return endpoint
   ))
-  >>= fun endpoint -> check_connectivity registry (Uri.path endpoint.url) 20 ()
+  >>= fun endpoint ->
+  register registry {endpoint with status=Pending};
+  join [
+    check_connectivity registry endpoint 5.;
+    Github.(Monad.(run (github >> Hook.test ~user ~repo ~num:endpoint.id ())));
+  ]
+  >>= fun () -> return (Hashtbl.find registry (Uri.path url))
 )))
