@@ -13,10 +13,17 @@ type package = {
   version: string;
 }
 
+type compiler = {
+  c_version : string;
+  c_build   : string;
+}
+
 type t = {
+  arch      : string;
   os        : string;
+  compiler  : string;
   package   : package;
-  depends   : package list;
+  depends   : package Set.t;
   extdepends: string;
 }
 
