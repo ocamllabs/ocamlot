@@ -1,4 +1,4 @@
-type status = Indicated | Unauthorized | Pending | Connected
+type status = Indicated | Pending | Timeout | Unauthorized | Connected
 type endpoint = {
   id : int;
   url : Uri.t;
@@ -11,8 +11,6 @@ type endpoint = {
   github : unit Github.Monad.t;
   handler : Http_server.response option Lwt.t Http_server.handler;
 }
-
-exception ConnectivityFailure of endpoint
 
 val connect :
   unit Github.Monad.t ->

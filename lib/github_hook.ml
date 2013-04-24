@@ -5,7 +5,7 @@ module CL = Cohttp_lwt_unix
 module CLB = CL.Body
 module S = Http_server
 
-type status = Indicated | Unauthorized | Pending | Connected
+type status = Indicated | Pending | Timeout | Unauthorized | Connected
 
 type endpoint = {
   id: int;
@@ -19,8 +19,6 @@ type endpoint = {
   github : unit Github.Monad.t;
   handler : S.response option Lwt.t S.handler;
 }
-
-exception ConnectivityFailure of endpoint
 
 let secret_prefix = "ocamlot"
 let () = Random.self_init ()
@@ -122,15 +120,15 @@ let register registry endpoint = Lwt.(
 let check_connectivity registry endpoint timeout_s = Lwt.(choose [
   Lwt_unix.sleep timeout_s
   >>= begin fun () ->
-    let endpoint = {endpoint with status=Unauthorized} in
+    let endpoint = {endpoint with status=Timeout} in
     Hashtbl.replace registry (Uri.path endpoint.url) endpoint;
     Lwt_condition.broadcast endpoint.update_event endpoint;
-    Lwt.fail (ConnectivityFailure endpoint)
+    Lwt.return ()
   end;
   let rec wait endpoint =
     Lwt_condition.wait endpoint.update_event
     >>= fun endpoint ->
-    if endpoint.status=Connected then Lwt.(return ())
+    if endpoint.status=Connected then Lwt.return ()
     else wait endpoint
   in wait endpoint
 ])
