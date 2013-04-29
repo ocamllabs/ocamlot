@@ -7,7 +7,7 @@ type endpoint = {
   repo : string;
   status : status;
   update_event : endpoint Lwt_condition.t;
-  last_event : Int32.t;
+  last_event : Time.t;
   github : unit Github.Monad.t;
   handler : Http_server.response option Lwt.t Http_server.handler;
 }

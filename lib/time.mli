@@ -1,1 +1,5 @@
-val mono_msec : unit -> Int32.t Github.Monad.t
+type t
+
+val min : t
+val now : unit -> t
+val to_string : t -> string

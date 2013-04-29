@@ -15,7 +15,7 @@ type endpoint = {
   repo: string;
   status : status;
   update_event : endpoint Lwt_condition.t;
-  last_event : Int32.t;
+  last_event : Time.t;
   github : unit Github.Monad.t;
   handler : S.response option Lwt.t S.handler;
 }
@@ -47,15 +47,8 @@ let verify_event req body secret = Lwt.(
     | None -> return false
 )
 
-let randomish_string k =
-  let buf = String.make k '\000' in
-  let rec gen x =
-    if k=x then buf
-    else (buf.[x] <- Char.chr (Random.int 0x100); gen (x+1))
-  in gen 0
-
 let new_secret prefix = prefix ^ ":"
-  ^ Cryptokit.(transform_string (Hexa.encode ()) (randomish_string 20))
+  ^ Cryptokit.(transform_string (Hexa.encode ()) (Util.randomish_string 20))
 
 let new_hook url = Github_t.(
   let secret = new_secret secret_prefix in {
@@ -86,7 +79,7 @@ let endpoint_of_hook github hook user repo handler = Github_t.(
     );
     status=Indicated;
     update_event=Lwt_condition.create ();
-    last_event=Int32.zero;
+    last_event=Time.min;
     github;
   })
 
@@ -95,8 +88,7 @@ let register registry endpoint = Lwt.(
     verify_event req body endpoint.secret
     >>= fun verified ->
     if verified then begin
-      Github.Monad.run (Time.mono_msec ())
-      >>= fun last_event ->
+      let last_event = Time.now () in
       let endpoint = { endpoint with last_event; status=Connected } in
       Hashtbl.replace registry (Uri.path endpoint.url) endpoint;
       Lwt_condition.broadcast endpoint.update_event endpoint;
@@ -117,7 +109,7 @@ let register registry endpoint = Lwt.(
   Hashtbl.replace registry (Uri.path endpoint.url) {endpoint with handler}
 )
 
-let check_connectivity registry endpoint timeout_s = Lwt.(choose [
+let check_connectivity registry endpoint timeout_s = Lwt.(pick [
   Lwt_unix.sleep timeout_s
   >>= begin fun () ->
     let endpoint = {endpoint with status=Timeout} in
