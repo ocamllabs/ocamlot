@@ -1,9 +1,13 @@
-type error = {
+type output = {
   err : string;
   out : string;
   info: string;
 }
 
-type t =
-  | OK of Time.duration
-  | Error of error
+type status = [ `Passed | `Failed ]
+
+type t = {
+  status : status;
+  duration : Time.duration;
+  output : output;
+}

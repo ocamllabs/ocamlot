@@ -1,6 +1,8 @@
 (*open Cmdliner*)
+open Result
 ;;
-Opam_task.run
+
+match Opam_task.run
   (Filename.concat (Unix.getcwd ()) "work")
   Opam_task.(Repo.({
     trunk={ branch_repo={ url=Uri.of_string "";
@@ -21,6 +23,16 @@ Opam_task.run
            };
     action=Build;
   }))
+with
+  | { status=`Failed; duration; output } ->
+      Printf.eprintf "OCAMLOT %s failed in %s\n%!"
+        "THE OPAM TASK"
+        (Time.duration_to_string duration)
+  | { status=`Passed; duration; output } ->
+      Printf.eprintf "OCAMLOT %s passed in %s\n%!"
+        "THE OPAM TASK"
+        (Time.duration_to_string duration)
+
 (*
 let test_cmd =
   let source =
