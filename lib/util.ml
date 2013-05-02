@@ -19,15 +19,15 @@ let hex_str_of_string s =
       loop (i+1)
   in loop 0
 
-let rec make_temp_dir ?temp_dir prefix suffix =
-  let temp_dir = match temp_dir with
+let rec make_fresh_dir ?k ?root_dir prefix =
+  let root_dir = match root_dir with
     | Some s -> s
     | None -> Filename.get_temp_dir_name ()
   in
+  let k = match k with None -> 0 | Some k -> k in
   try
-    let junk = hex_str_of_string (randomish_string 10) in
-    let name = Filename.concat temp_dir (prefix^junk^suffix) in
+    let name = Filename.concat root_dir (prefix^(string_of_int k)) in
     Unix.mkdir name 0o700;
     name
   with _ ->
-    make_temp_dir ~temp_dir prefix suffix
+    make_fresh_dir ~k:(k+1) ~root_dir prefix
