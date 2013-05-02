@@ -8,4 +8,4 @@ val make_listener :
   (routes:Re.t ->
    handler:Http_server.response option Lwt.t Http_server.handler ->
    startup:unit Lwt.t list -> 'a) ->
-  root:string -> host:string -> port:int -> queue:Ocamlot.queue -> 'a
+  root:string -> host:string -> port:int -> queue:Ocamlot.t -> 'a
