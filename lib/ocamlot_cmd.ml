@@ -6,6 +6,7 @@ open Result
 module Jar = Github_cookie_jar
 
 exception WTFGitHub of string
+exception MissingEnv of string
 
 let version = "0.0.0"
 
@@ -25,11 +26,11 @@ let load_auth name =
       >> API.set_token (Token.of_string auth.Github_t.auth_token)
     ))
 
-let list_pulls () = Lwt_main.run (
+let list_pulls closed = Lwt_main.run (
   load_auth cookie
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
-    >> Pull.for_repo ~user ~repo ~state:`Open ()
+    >> Pull.for_repo ~user ~repo ~state:(if closed then `Closed else `Open) ()
     >>= fun pulls ->
     printf "%-8s | %-10s | %-40s\n" "Number" "Created" "Title";
     printf "%s\n" (String.make 80 '-');
@@ -48,6 +49,18 @@ let show_pull pull_id = Lwt_main.run (
     >>= fun pull ->
     printf "%s\n" (Yojson.Safe.prettify (Github_j.string_of_pull pull));
     return ()
+  ))))
+
+let open_pull pull_id = Lwt_main.run (
+  load_auth cookie
+  >>= fun github -> Github.(Monad.(run Github_t.(
+    github
+    >> Pull.get ~user ~repo ~num:pull_id ()
+    >>= fun pull ->
+    try let browser = OpamMisc.getenv "BROWSER" in
+        OpamSystem.command [ browser; pull.pull_html_url ];
+        return ()
+    with Not_found -> raise (MissingEnv "Missing BROWSER environment variable")
   ))))
 
 let base_branch_of_pull pull = Github_t.(
@@ -100,19 +113,23 @@ let test_pull pull_id = Lwt_main.run (
   ))))
 
 (* CLI *)
+let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")
+
 let list_cmd =
-  Term.(pure list_pulls $ pure ()),
+  let closed = Arg.(value (flag (info ["closed"] ~docv:"CLOSED" ~doc:"Show closed pull requests."))) in
+  Term.(pure list_pulls $ closed),
   Term.info "list" ~doc:"list all outstanding Github OCamlPro/opam-repository pull requests"
 
 let show_cmd =
-  let number = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.") in
-  Term.(pure show_pull $ number),
+  Term.(pure show_pull $ pull_id),
   Term.info "show" ~doc:"show more details of a single Github OCamlPro/opam-repository pull request"
 
+let open_cmd =
+  Term.(pure open_pull $ pull_id),
+  Term.info "open" ~doc:"open the GitHub pull request overview"
 
 let test_cmd =
-  let number = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.") in
-  Term.(pure test_pull $ number),
+  Term.(pure test_pull $ pull_id),
   Term.info "test" ~doc:"test a Github OCamlPro/opam-repository pull request"
 
 let default_cmd =
@@ -127,7 +144,7 @@ let default_cmd =
      `P "Email bug reports to <mailto:infrastructure@lists.ocaml.org>, or report them online at <http://github.com/ocamllabs/ocamlot>."] in
   Term.info "ocamlot" ~version ~doc ~man
 
-let cmds = [list_cmd; show_cmd; test_cmd] (* merge_cmd]*)
+let cmds = [list_cmd; show_cmd; open_cmd; test_cmd] (* merge_cmd]*)
 
 let () =
   match Term.eval_choice default_cmd cmds with
