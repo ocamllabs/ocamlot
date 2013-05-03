@@ -68,12 +68,16 @@ let clone_opam ~jobs root tmp compiler =
   let switch = OpamSwitch.of_string (compiler.c_version^compiler.c_build) in
   let master_name = Filename.concat root "ocamlot.opam.master" in
   OpamGlobals.root_dir := master_name;
+  OpamGlobals.keep_build_dir := true;
   let opam_root = OpamPath.default () in
   let config_f = OpamPath.config opam_root in
   (if OpamFilename.exists config_f
    then Client.update []
    else initialize_opam ~jobs);
   Client.SWITCH.switch ~quiet:false ~warning:true switch;
+  let build_dir = OpamPath.Switch.build_ocaml opam_root switch in
+  (if OpamFilename.exists_dir build_dir
+   then OpamSystem.command [ "rm"; "-rf"; OpamFilename.Dir.to_string build_dir ]);
   let clone_name = Filename.concat tmp "opam-install" in
   let clone_dir = OpamFilename.Dir.of_string clone_name in
   let master_dir = OpamFilename.Dir.of_string master_name in

@@ -109,7 +109,7 @@ let build_testable testable =
            };
     action=Build;
   }) in
-  match Opam_task.run prefix work_dir task with
+  match Opam_task.run ~jobs:3 prefix work_dir task with
     | { status=`Failed; duration; output } ->
         Printf.eprintf "%s\n%!" output.err;
         Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
