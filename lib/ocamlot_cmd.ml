@@ -63,25 +63,25 @@ let open_pull pull_id = Lwt_main.run (
     with Not_found -> raise (MissingEnv "Missing BROWSER environment variable")
   ))))
 
-let base_branch_of_pull pull = Github_t.(
-  match pull.pull_base.branch_repo with
+let branch_of_proj_pull proj pull = Github_t.(
+  let branch = proj pull in
+  match branch.branch_repo with
     | None -> raise (WTFGitHub (sprintf "pull %d lacks a base repo" pull.pull_number))
-    | Some repo -> let repo_url = Uri.of_string repo.repo_clone_url in Repo.({
-      repo={ url=Uri.of_string ""; repo_url };
-      name=pull.pull_base.branch_ref;
-      label=pull.pull_base.branch_label;
-    })
+    | Some repo -> let repo_url = Uri.of_string repo.repo_clone_url in Repo.(
+      match pull.pull_state with
+        | `Open -> {
+          repo={ url=Uri.of_string ""; repo_url };
+          name=Head branch.branch_ref;
+          label=branch.branch_label;
+        }
+        | `Closed -> let sha = branch.branch_sha in {
+          repo={ url=Uri.of_string ""; repo_url };
+          name=Commit (branch.branch_ref, sha);
+          label=branch.branch_user.user_login^":"^sha;
+        })
 )
-
-let head_branch_of_pull pull = Github_t.(
-  match pull.pull_head.branch_repo with
-    | None -> raise (WTFGitHub (sprintf "pull %d lacks a head repo" pull.pull_number))
-    | Some repo -> let repo_url = Uri.of_string repo.repo_clone_url in Repo.({
-      repo={ url=Uri.of_string ""; repo_url };
-      name=pull.pull_head.branch_ref;
-      label=pull.pull_head.branch_label;
-    })
-)
+let base_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_base)
+let head_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_head)
 
 let test_pull pull_id = Lwt_main.run (
   load_auth cookie

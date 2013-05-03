@@ -78,9 +78,12 @@ let try_merge ~merge_name ~base ~head =
   try
     OpamFilename.in_dir merge_dir Repo.(fun () -> OpamSystem.commands [
       [ "git" ; "clone" ; base_url ; "." ];
-      [ "git" ; "checkout" ; base.name ];
-      [ "git" ; "fetch" ; head_url ; head.name];
-      [ "git" ; "merge" ; "--no-edit" ; "FETCH_HEAD" ];
+      [ "git" ; "checkout" ;
+        match base.name with Head h -> h | Commit (_,sha) -> sha ];
+      [ "git" ; "fetch" ; head_url ;
+        match head.name with Head h -> h | Commit (h,_) -> h ];
+      [ "git" ; "merge" ; "--no-edit" ;
+        match head.name with Head _ -> "FETCH_HEAD" | Commit (_,sha) -> sha ];
     ]);
     Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
       head.Repo.label base.Repo.label;

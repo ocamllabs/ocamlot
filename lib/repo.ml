@@ -5,9 +5,11 @@ type 'a t = {
   repo_url : 'a;
  (* endpoint : endpoint; *)
 }
+type sha = string
+type reference = Head of string | Commit of string * sha
 type 'a branch = {
   repo : 'a t;
-  name : string;
+  name : reference;
   label : string;
 }
 
