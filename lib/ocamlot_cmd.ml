@@ -8,6 +8,8 @@ module Jar = Github_cookie_jar
 exception WTFGitHub of string
 exception MissingEnv of string
 
+type testable = Pull of int | Packages of string list
+
 let version = "0.0.0"
 
 let user = "OCamlPro"
@@ -83,34 +85,40 @@ let branch_of_proj_pull proj pull = Github_t.(
 let base_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_base)
 let head_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_head)
 
-let test_pull pull_id = Lwt_main.run (
+let packages_of_pull pull_id = Lwt_main.run (
   load_auth cookie
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
-    >>= fun pull ->
-    let work_dir = Filename.concat (Unix.getcwd ()) "work" in
-    let task = Opam_task.(Repo.({
+    >>= fun pull -> return Opam_task.(Diff {
       base=base_branch_of_pull pull;
       head=head_branch_of_pull pull;
-      target={ arch=Host.X86_64; os=OpamGlobals.Linux;
-               compiler={ c_version="4.00.1"; c_build="" };
-             };
-      action=Build;
-    })) in
-    match Opam_task.run (string_of_int pull_id) work_dir task with
-      | { status=`Failed; duration; output } ->
-          Printf.eprintf "%s\n%!" output.err;
-          Printf.eprintf "OCAMLOT %s failed in %s\n%!"
-            "THE OPAM TASK"
-            (Time.duration_to_string duration);
-          return ()
-      | { status=`Passed; duration; output } ->
-          Printf.eprintf "OCAMLOT %s passed in %s\n%!"
-            "THE OPAM TASK"
-            (Time.duration_to_string duration);
-          return ()
+    })
   ))))
+
+let work_dir = Filename.concat (Unix.getcwd ()) "work"
+let build_testable testable =
+  let prefix, packages = match testable with
+    | Pull pull_id -> string_of_int pull_id, packages_of_pull pull_id
+    | Packages pkglst -> String.concat "-" pkglst, Opam_task.List pkglst
+  in
+  let task = Opam_task.({
+    packages;
+    target={ arch=Host.X86_64; os=OpamGlobals.Linux;
+             compiler={ c_version="4.00.1"; c_build="" };
+           };
+    action=Build;
+  }) in
+  match Opam_task.run prefix work_dir task with
+    | { status=`Failed; duration; output } ->
+        Printf.eprintf "%s\n%!" output.err;
+        Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
+          (Opam_task.to_string task)
+          (Time.duration_to_string duration)
+    | { status=`Passed; duration; output } ->
+        Printf.eprintf "OCAMLOT %s PASSED in %s\n%!"
+          (Opam_task.to_string task)
+          (Time.duration_to_string duration)
 
 (* CLI *)
 let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")
@@ -128,9 +136,17 @@ let open_cmd =
   Term.(pure open_pull $ pull_id),
   Term.info "open" ~doc:"open the GitHub pull request overview"
 
-let test_cmd =
-  Term.(pure test_pull $ pull_id),
-  Term.info "test" ~doc:"test a Github OCamlPro/opam-repository pull request"
+let int_re = Re.(compile (seq [bos; rep1 digit; eos]))
+let is_int = Re.execp int_re
+let testable_of_string s =
+  if is_int s
+  then Pull (int_of_string s)
+  else Packages Re_str.(split (regexp_string ",") s)
+let build_cmd =
+  let testable_str = Arg.(required & pos 0 (some string) None & info []
+                            ~docv:"PKGS_ID" ~doc:"Pull identifier or comma-separated package list") in
+  Term.(pure build_testable $ (pure testable_of_string $ testable_str)),
+  Term.info "build" ~doc:"build a Github OCamlPro/opam-repository pull request"
 
 let default_cmd =
   let doc = "conduct integration tests for opam-repository" in
@@ -144,7 +160,7 @@ let default_cmd =
      `P "Email bug reports to <mailto:infrastructure@lists.ocaml.org>, or report them online at <http://github.com/ocamllabs/ocamlot>."] in
   Term.info "ocamlot" ~version ~doc ~man
 
-let cmds = [list_cmd; show_cmd; open_cmd; test_cmd] (* merge_cmd]*)
+let cmds = [list_cmd; show_cmd; open_cmd; build_cmd] (* merge_cmd]*)
 
 let () =
   match Term.eval_choice default_cmd cmds with

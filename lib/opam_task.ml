@@ -17,10 +17,11 @@ type target = {
 }
 
 type action = Check | Build (*| Test | Benchmark*)
+type diff = { base : Repo.git Repo.branch; head : Repo.git Repo.branch }
+type packages = Diff of diff | List of string list
 
 type t = {
-  base : Repo.git Repo.branch;
-  head : Repo.git Repo.branch;
+  packages : packages;
   target : target;
   action : action;
 }
@@ -30,6 +31,26 @@ type 'a process = Continue of 'a | Terminate of Result.output
 let (>>=) process f = match process with
   | Continue env -> f env
   | Terminate out -> Terminate out
+
+let string_of_action = function
+  | Check -> "check"
+  | Build -> "build"
+
+let string_of_packages = function
+  | Diff { base; head } -> head.Repo.label^" onto "^base.Repo.label
+  | List pkglst -> String.concat "," pkglst
+
+let string_of_target { arch; os; compiler } =
+  Printf.sprintf "%s on %s (%s)"
+    (compiler.c_version^compiler.c_build)
+    (Host.string_of_os os)
+    (Host.string_of_arch arch)
+
+let to_string { packages; target; action } =
+  Printf.sprintf "[%s %s with %s]"
+    (string_of_action action)
+    (string_of_packages packages)
+    (string_of_target target)
 
 let initialize_opam ~jobs =
   let repo_name = OpamRepositoryName.default in
@@ -139,7 +160,7 @@ let try_install packages =
       })
     )
 
-let run ?jobs prefix root_dir {base; head; target} =
+let run ?jobs prefix root_dir {action; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
   (* merge repositories *)
@@ -149,17 +170,24 @@ let run ?jobs prefix root_dir {base; head; target} =
   let merge_name = Filename.concat tmp_name "opam-repository" in
   Unix.mkdir merge_name 0o700;
   match begin
-    try_merge ~merge_name ~base ~head
-    >>= fun merge_dir ->
     (* initialize opam if necessary and alias target compiler *)
-    let clone_dir = clone_opam ~jobs root_dir tmp_name  target.compiler in
-    (* add merged repository to opam *)
-    Client.REPOSITORY.add
-      (OpamRepositoryName.of_string merge_name)
-      `local merge_dir ~priority:None;
-    Printf.eprintf "OCAMLOT repo merge added\n%!";
-    Continue merge_dir
-    >>= try_infer_packages
+    let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
+    begin match packages with
+      | Diff { base; head } ->
+          try_merge ~merge_name ~base ~head
+          >>= fun merge_dir ->
+          (* add merged repository to opam *)
+          Client.REPOSITORY.add
+            (OpamRepositoryName.of_string merge_name)
+            `local merge_dir ~priority:None;
+          (* remove default repository from opam *)
+          Client.REPOSITORY.remove (OpamRepositoryName.of_string "default");
+          Printf.eprintf "OCAMLOT repo merge added\n%!";
+          Continue merge_dir
+          >>= try_infer_packages
+      | List pkgs ->
+          Continue (List.map OpamPackage.Name.of_string pkgs)
+    end
     >>= fun packages ->
     Printf.eprintf "OCAMLOT testing %s\n%!"
       (String.concat " " (List.map OpamPackage.Name.to_string packages));
