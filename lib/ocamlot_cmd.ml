@@ -46,7 +46,7 @@ let show_pull pull_id = Lwt_main.run (
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
     >>= fun pull ->
-    printf "%s\n" (Github_j.string_of_pull pull);
+    printf "%s\n" (Yojson.Safe.prettify (Github_j.string_of_pull pull));
     return ()
   ))))
 
@@ -83,13 +83,6 @@ let test_pull pull_id = Lwt_main.run (
       target={ arch=Host.X86_64; os=OpamGlobals.Linux;
                compiler={ c_version="4.00.1"; c_build="" };
              };
-             (*{ p_name="async";         p_version="109.21.00" };
-               { p_name="async_unix";    p_version="109.21.00" };
-               { p_name="core";          p_version="109.21.00" };
-               { p_name="core_extended"; p_version="109.21.00" };
-               { p_name="jenga";         p_version="109.21.00" };
-               { p_name="zero";          p_version="109.21.00" };
-               ];*)
       action=Build;
     })) in
     match Opam_task.run (string_of_int pull_id) work_dir task with
