@@ -102,11 +102,10 @@ let build_testable testable =
     | Pull pull_id -> string_of_int pull_id, packages_of_pull pull_id
     | Packages pkglst -> String.concat "-" pkglst, Opam_task.List pkglst
   in
+  let {Host.os; arch} = Host.detect () in
   let task = Opam_task.({
     packages;
-    target={ arch=Host.X86_64; os=OpamGlobals.Linux;
-             compiler={ c_version="4.00.1"; c_build="" };
-           };
+    target={ arch; os; compiler={ c_version="4.00.1"; c_build="" }; };
     action=Build;
   }) in
   match Opam_task.run ~jobs:3 prefix work_dir task with
