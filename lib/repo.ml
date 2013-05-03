@@ -5,5 +5,9 @@ type 'a t = {
   repo_url : 'a;
  (* endpoint : endpoint; *)
 }
-type 'a branch = { branch_repo : 'a t; branch_name : string; }
+type 'a branch = {
+  repo : 'a t;
+  name : string;
+  label : string;
+}
 
