@@ -198,9 +198,11 @@ let run ?jobs prefix root_dir {action; packages; target} =
     Continue ()
   end with
     | Continue () ->
-        (* report success *)
         let duration = Time.(elapsed start (now ())) in
-        (* TODO: capture stdio *)
+        (* clean up tmp_name *)
+        OpamSystem.command [ "rm"; "-rf"; tmp_name ];
+        (* TODO: capture stdout/stderr *)
+        (* report success *)
         Result.({ status=`Passed; duration; output={err="";out="";info=""} })
     | Terminate output ->
         let duration = Time.(elapsed start (now ())) in
