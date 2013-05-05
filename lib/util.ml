@@ -29,5 +29,5 @@ let rec make_fresh_dir ?k ?root_dir prefix =
     let name = Filename.concat root_dir (prefix^(string_of_int k)) in
     Unix.mkdir name 0o700;
     name
-  with _ ->
+  with Unix.Unix_error (Unix.EEXIST, "mkdir", _) ->
     make_fresh_dir ~k:(k+1) ~root_dir prefix
