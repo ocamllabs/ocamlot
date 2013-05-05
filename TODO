@@ -1,1 +1,13 @@
-* work directory management
+* cmd
+  * work directory management
+  * switch flag
+  * repository flag
+* opam task
+  * opam io capture
+  * metadata check
+  * mk-repo check
+  * pin version
+* fix opam2web
+* policy
+  * test downstream
+  * bisect constraint search
