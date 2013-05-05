@@ -96,7 +96,8 @@ let packages_of_pull pull_id = Lwt_main.run (
     })
   ))))
 
-let work_dir = Filename.concat (Unix.getcwd ()) "work"
+let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlot")
+let () = OpamSystem.mkdir work_dir
 let build_testable testable =
   let prefix, packages = match testable with
     | Pull pull_id -> string_of_int pull_id, packages_of_pull pull_id
