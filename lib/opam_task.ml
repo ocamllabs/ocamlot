@@ -150,7 +150,14 @@ let try_infer_packages merge_dir =
         })
     | OpamSystem.Process_error e -> terminate_of_process_error e
 
-let try_install packages =
+let try_install tmp pkgs =
+  (* TODO: fix this terrible hack *)
+  let r = OpamProcess.run ~name:(Filename.concat tmp "install") "opam" [
+    "install" ; pkgs ;
+    "--yes" ; "--root="^(Filename.concat tmp "opam-install") ;
+  ] in
+  Continue (pkgs, r)
+(* Maybe once we tame opam's stdout/stderr...
   try
     OpamGlobals.yes := true;
     Client.install (OpamPackage.Name.Set.of_list packages);
@@ -163,6 +170,7 @@ let try_install packages =
         info="";
       })
     )
+*)
 
 let run ?jobs prefix root_dir {action; packages; target} =
   let start = Time.now () in
@@ -193,21 +201,31 @@ let run ?jobs prefix root_dir {action; packages; target} =
           Continue (List.map OpamPackage.Name.of_string pkgs)
     end
     >>= fun packages ->
-    Printf.eprintf "OCAMLOT testing %s\n%!"
-      (String.concat " " (List.map OpamPackage.Name.to_string packages));
-    Continue packages
-    >>= try_install
-    >>= fun () ->
-    Printf.eprintf "OCAMLOT test packages built and installed\n%!";
-    Continue ()
+    let pkgs = String.concat " " (List.map OpamPackage.Name.to_string packages) in
+    Printf.eprintf "OCAMLOT building %s\n%!" pkgs;
+    Continue pkgs
+    >>= try_install tmp_name
   end with
-    | Continue () ->
+    | Continue (pkgs, result) ->
         let duration = Time.(elapsed start (now ())) in
-        (* clean up tmp_name *)
-        OpamSystem.command [ "rm"; "-rf"; tmp_name ];
-        (* TODO: capture stdout/stderr *)
-        (* report success *)
-        Result.({ status=`Passed; duration; output={err="";out="";info=""} })
+
+        let facts = Printf.sprintf "OCAMLOT \"opam install %s\" exited %d in %fs"
+          pkgs result.OpamProcess.r_code result.OpamProcess.r_duration in
+        let status = if result.OpamProcess.r_code = 0
+          then begin (* clean up opam-install *)
+            OpamSystem.command [ "rm"; "-rf"; Filename.concat tmp_name "opam-install" ];
+            `Passed
+          end else `Failed
+        in
+        Result.({ status; duration;
+                  output={
+                    err=String.concat "\n" (facts::""::result.OpamProcess.r_stderr);
+                    out=String.concat "\n" result.OpamProcess.r_stdout;
+                    info=result.OpamProcess.r_info};
+                })
     | Terminate output ->
         let duration = Time.(elapsed start (now ())) in
+        (* clean up opam-install *)
+        OpamSystem.command [ "rm"; "-rf"; Filename.concat tmp_name "opam-install" ];
+
         Result.({ status=`Failed; duration; output })
