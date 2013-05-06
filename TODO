@@ -1,12 +1,18 @@
+* service
+  * github scanning
+  * task generation
+  * report storage
+  * pull request mirroring
+  * work dispatch
 * cmd
   * work directory management
   * switch flag
   * repository flag
 * opam task
-  * opam io capture
   * metadata check
   * mk-repo check
   * pin version
+  * error classification
 * fix opam2web
 * policy
   * test downstream
