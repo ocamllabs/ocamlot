@@ -9,19 +9,35 @@ exception WTFGitHub of string
 exception MissingEnv of string
 
 type testable = Pull of int | Packages of string list
+type github_repo = {
+  user : string;
+  repo : string;
+}
 
 let version = "0.0.0"
 
-let user = "OCamlPro"
-let repo = "opam-repository"
-let cookie = "ocamlot"
+let main_repo = {
+  user = "OCamlPro";
+  repo = "opam-repository";
+}
 
-let load_auth name =
+let mirror_base_repo = {
+  user = "ocamlot-dev";
+  repo = "opam-repository";
+}
+
+let mirror_head_repo = {
+  user = "ocamlot";
+  repo = "opam-repository";
+}
+
+let load_auth {user;repo} =
+  let name = user^"/"^repo in
   Jar.get ~name
   >>= function
     | None ->
-        Printf.eprintf "No Github Cookie Jar cookie 'ocamlot'\n";
-        Printf.eprintf "Use ocaml-github/jar.native to create a local token 'ocamlot'\n";
+        Printf.eprintf "No Github Cookie Jar cookie '%s'\n" name;
+        Printf.eprintf "Use 'git jar' to create a local token '%s'\n" name;
         exit 1
     | Some auth -> return Github.(Monad.(
       API.set_user_agent "ocamlot_cmd"
@@ -29,7 +45,8 @@ let load_auth name =
     ))
 
 let list_pulls closed = Lwt_main.run (
-  load_auth cookie
+  let {user; repo} = main_repo in
+  load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.for_repo ~user ~repo ~state:(if closed then `Closed else `Open) ()
@@ -44,7 +61,8 @@ let list_pulls closed = Lwt_main.run (
   ))))
 
 let show_pull pull_id = Lwt_main.run (
-  load_auth cookie
+  let {user; repo} = main_repo in
+  load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
@@ -54,7 +72,8 @@ let show_pull pull_id = Lwt_main.run (
   ))))
 
 let open_pull pull_id = Lwt_main.run (
-  load_auth cookie
+  let {user; repo} = main_repo in
+  load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
@@ -64,7 +83,11 @@ let open_pull pull_id = Lwt_main.run (
         return ()
     with Not_found -> raise (MissingEnv "Missing BROWSER environment variable")
   ))))
-
+(*
+let mirror_pull pull_id = Lwt_main.run (
+  let {user; repo} = main_repo
+)
+*)
 let branch_of_proj_pull proj pull = Github_t.(
   let branch = proj pull in
   match branch.branch_repo with
@@ -86,7 +109,8 @@ let base_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_ba
 let head_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_head)
 
 let packages_of_pull pull_id = Lwt_main.run (
-  load_auth cookie
+  let {user; repo} = main_repo in
+  load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
@@ -147,20 +171,24 @@ let build_cmd =
                             ~docv:"PKGS_ID" ~doc:"Pull identifier or comma-separated package list") in
   Term.(pure build_testable $ (pure testable_of_string $ testable_str)),
   Term.info "build" ~doc:"build a Github OCamlPro/opam-repository pull request"
-
+(*
+let mirror_cmd =
+  Term.(pure mirror_pull $ pull_id),
+  Term.info "mirror" ~doc:"mirror the GitHub pull request"
+*)
 let default_cmd =
   let doc = "conduct integration tests for opam-repository" in
   Term.(ret (pure (`Help (`Pager, None)))),
   let man = [
     `S "DESCRIPTION";
-    `P "To maintain a high-level of quality assurance for the OCaml Platform, OPAM package repository maintainers need to quickly and accurately assess compatibility of proposed package updates. $(b,ocamlot) gives maintainers command-line access to GitHub pull requests and a simple means to test the effect of the proposed package updates in an isolated environment.";
+    `P "To assure a high-level of quality for the OCaml Platform, OPAM package repository maintainers need to quickly and accurately assess compatibility of proposed package updates. $(b,ocamlot) gives maintainers command-line access to GitHub pull requests and a simple means to test the effect of the proposed package updates in an isolated environment.";
     `S "COMMON OPTIONS";
     `P "$(b,--help) will show more help for each of the sub-commands above.";
     `S "BUGS";
      `P "Email bug reports to <mailto:infrastructure@lists.ocaml.org>, or report them online at <http://github.com/ocamllabs/ocamlot>."] in
   Term.info "ocamlot" ~version ~doc ~man
 
-let cmds = [list_cmd; show_cmd; open_cmd; build_cmd] (* merge_cmd]*)
+let cmds = [list_cmd; show_cmd; open_cmd; build_cmd] (*; mirror_cmd] (* merge_cmd]*)*)
 
 let () =
   match Term.eval_choice default_cmd cmds with
