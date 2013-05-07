@@ -1,21 +1,21 @@
 type os = OpamGlobals.os
 (*type isa_exts*)
 (* TODO: differences? compatibilities? worth it? *)
-type arch = X86_64 | Amd64 | I386 | I686 | Armv61 | Unknown
+type arch = X86_64 | I386 | I686 | Armv61 | Unknown
 type t = { os : os; arch : arch }
 
 let string_of_os = OpamGlobals.string_of_os
 
 let string_of_arch = function
   | X86_64 -> "x86_64"
-  | Amd64 -> "amd64"
   | I386 -> "i386"
   | I686 -> "i686"
   | Armv61 -> "armv61"
+  | Unknown -> "unknown"
 
 let arch_of_string_opt = function
   | Some "x86_64" -> X86_64
-  | Some "amd64" -> Amd64
+  | Some "amd64" -> X86_64
   | Some "i386" -> I386
   | Some "i686" -> I686
   | Some "armv61" -> Armv61
