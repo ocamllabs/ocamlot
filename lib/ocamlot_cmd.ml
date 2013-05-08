@@ -31,6 +31,9 @@ let mirror_head_repo = {
   repo = "opam-repository";
 }
 
+let url_of_repo {user; repo} = Uri.of_string
+  (sprintf "https://github.com/%s/%s.git" user repo)
+
 let load_auth {user;repo} =
   let name = user^"/"^repo in
   Jar.get ~name
@@ -88,44 +91,74 @@ let mirror_pull pull_id = Lwt_main.run (
   let {user; repo} = main_repo
 )
 *)
-let branch_of_proj_pull proj pull = Github_t.(
-  let branch = proj pull in
-  match branch.branch_repo with
-    | None -> raise (WTFGitHub (sprintf "pull %d lacks a base repo" pull.pull_number))
-    | Some repo -> let repo_url = Uri.of_string repo.repo_clone_url in Repo.(
-      match pull.pull_state with
-        | `Open -> {
-          repo={ url=Uri.of_string ""; repo_url };
-          name=Head branch.branch_ref;
-          label=branch.branch_label;
-        }
-        | `Closed -> let sha = branch.branch_sha in {
-          repo={ url=Uri.of_string ""; repo_url };
-          name=Commit (branch.branch_ref, sha);
-          label=branch.branch_user.user_login^":"^sha;
-        })
+type pull_part = Base | Head
+let branch_of_pull part pull = Github_t.(
+  let pull_id = pull.pull_number in
+  let ref_base = "refs/pull/"^(string_of_int pull_id)^"/" in
+  let base = match pull.pull_base.branch_repo with
+    | None -> raise (WTFGitHub (sprintf "pull %d lacks a base repo" pull_id))
+    | Some repo -> repo
+  in
+  let repo_url = Uri.of_string base.repo_clone_url in
+  match part with
+    | Head -> let label = ref_base^"head" in Repo.({
+      repo={ url=Uri.of_string ""; repo_url };
+      name=Repo.Ref label; label=base.repo_full_name^":"^label
+    })
+    | Base -> let label = ref_base^"base" in Repo.({
+      repo={ url=Uri.of_string ""; repo_url };
+      name=Repo.Commit (label, pull.pull_base.branch_sha);
+      label=base.repo_full_name^":"^label;
+    })
 )
-let base_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_base)
-let head_branch_of_pull = branch_of_proj_pull (fun pull -> pull.Github_t.pull_head)
 
-let packages_of_pull pull_id = Lwt_main.run (
+let diff_of_pull pull_id = Lwt_main.run (
   let {user; repo} = main_repo in
   load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
-    >>= fun pull -> return Opam_task.(Diff {
-      base=base_branch_of_pull pull;
-      head=head_branch_of_pull pull;
+    >>= fun pull -> return Opam_task.({
+      base=branch_of_pull Base pull;
+      head=branch_of_pull Head pull;
     })
   ))))
 
 let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlot")
 let () = OpamSystem.mkdir work_dir
-let build_testable testable =
+let build_testable testable repo_opt branch_opt =
+  let repo_of_path rpath name =
+    let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
+    let repo_url = Uri.(resolve "file" cwd (of_string rpath)) in
+    Some Repo.({repo ={ url=Uri.of_string ""; repo_url };
+                name=Ref name; label=sprintf "%s:%s" rpath name;
+               })
+  in
+  let branch_opt = match repo_opt, branch_opt with
+    | None, None -> None
+    | Some rpath, None -> repo_of_path rpath "master"
+    | None, Some bname -> repo_of_path (Uri.to_string (url_of_repo main_repo)) bname
+    | Some rpath, Some bname -> repo_of_path rpath bname
+  in
   let prefix, packages = match testable with
-    | Pull pull_id -> string_of_int pull_id, packages_of_pull pull_id
-    | Packages pkglst -> String.concat "-" pkglst, Opam_task.List pkglst
+    | Pull pull_id ->
+        string_of_int pull_id, Opam_task.Diff (diff_of_pull pull_id, branch_opt)
+    | Packages pkglst ->
+        begin match branch_opt with
+          | None -> String.concat "-" pkglst, Opam_task.List (pkglst, None)
+          | Some head -> String.concat "-" pkglst,
+            Opam_task.(List (pkglst, Some {
+              base={
+                Repo.repo =Repo.({
+                  url=Uri.of_string "";
+                  repo_url=url_of_repo main_repo
+                });
+                name = Repo.Ref "master";
+                label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
+              };
+              head;
+            }))
+        end
   in
   let {Host.os; arch} = Host.detect () in
   let task = Opam_task.({
@@ -169,7 +202,11 @@ let testable_of_string s =
 let build_cmd =
   let testable_str = Arg.(required & pos 0 (some string) None & info []
                             ~docv:"PKGS_ID" ~doc:"Pull identifier or comma-separated package list") in
-  Term.(pure build_testable $ (pure testable_of_string $ testable_str)),
+  let overlay = Arg.(value & pos 1 (some string) None & info []
+                       ~docv:"REPO_HREF" ~doc:"opam-repository URI reference to merge last") in
+  let overlay_branch = Arg.(value & pos 2 (some string) None & info []
+                              ~docv:"REPO_BRANCH" ~doc:"branch of $(b,REPO_HREF) to merge last") in
+  Term.(pure build_testable $ (pure testable_of_string $ testable_str) $ overlay $ overlay_branch),
   Term.info "build" ~doc:"build a Github OCamlPro/opam-repository pull request"
 (*
 let mirror_cmd =

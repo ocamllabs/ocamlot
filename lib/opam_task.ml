@@ -18,7 +18,9 @@ type target = {
 
 type action = Check | Build (*| Test | Benchmark*)
 type diff = { base : Repo.git Repo.branch; head : Repo.git Repo.branch }
-type packages = Diff of diff | List of string list
+type packages =
+  | Diff of diff * Repo.git Repo.branch option
+  | List of string list * diff option
 
 type t = {
   packages : packages;
@@ -36,9 +38,14 @@ let string_of_action = function
   | Check -> "check"
   | Build -> "build"
 
+let string_of_diff { base; head } = Repo.(head.label^" onto "^base.label)
 let string_of_packages = function
-  | Diff { base; head } -> head.Repo.label^" onto "^base.Repo.label
-  | List pkglst -> String.concat "," pkglst
+  | Diff (diff, None) -> string_of_diff diff
+  | Diff (diff, Some overlay) ->
+      Repo.(overlay.label^" onto "^(string_of_diff diff))
+  | List (pkglst, None) -> String.concat "," pkglst
+  | List (pkglst, Some diff) ->
+      (String.concat "," pkglst)^" from "^(string_of_diff diff)
 
 let string_of_target { arch; os; compiler } =
   Printf.sprintf "%s on %s (%s)"
@@ -96,20 +103,33 @@ let terminate_of_process_error e = OpamProcess.(
   })
 )
 
+let clone_repo ~name ~branch =
+  let dir = OpamFilename.Dir.of_string name in
+  let url = Uri.to_string Repo.(branch.repo.repo_url) in
+  let git_ref, ref_cmd = Repo.(match branch.name with
+    | Ref r -> r, []
+    | Commit (r, sha) -> r, [[ "git" ; "update-ref" ; r ; sha ]]
+  ) in
+  try
+    OpamFilename.in_dir dir Repo.(fun () -> OpamSystem.commands ([
+      [ "git" ; "clone" ; url ; "." ];
+    ]@ref_cmd@[
+      [ "git" ; "checkout" ; git_ref ];
+    ]));
+    Printf.eprintf "OCAMLOT repo clone %s\n%!" branch.Repo.label;
+    Continue dir
+  with OpamSystem.Process_error e -> terminate_of_process_error e
+
 let try_merge ~merge_name ~base ~head =
   let merge_dir = OpamFilename.Dir.of_string merge_name in
-  let base_url = Uri.to_string Repo.(base.repo.repo_url) in
   let head_url = Uri.to_string Repo.(head.repo.repo_url) in
-  try
-    OpamFilename.in_dir merge_dir Repo.(fun () -> OpamSystem.commands [
-      [ "git" ; "clone" ; base_url ; "." ];
-      [ "git" ; "checkout" ;
-        match base.name with Head h -> h | Commit (_,sha) -> sha ];
+  try (* TODO: update-ref ? *)
+    OpamFilename.in_dir merge_dir Repo.(fun () -> OpamSystem.commands ([
       [ "git" ; "fetch" ; head_url ;
-        match head.name with Head h -> h | Commit (h,_) -> h ];
+        match head.name with Ref h -> h^":"^h | Commit (h,_) -> h^":"^h ];
       [ "git" ; "merge" ; "--no-edit" ;
-        match head.name with Head _ -> "FETCH_HEAD" | Commit (_,sha) -> sha ];
-    ]);
+        match head.name with Ref h -> h | Commit (h,_) -> h ];
+    ]));
     Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
       head.Repo.label base.Repo.label;
     Continue merge_dir
@@ -117,7 +137,11 @@ let try_merge ~merge_name ~base ~head =
     | OpamSystem.Process_error e -> terminate_of_process_error e
 
 (* TODO: log inference *)
-let pkg_semantic = Re.(alt [str "/opam"; str "/url"])
+let pkg_semantic = Re.(alt [
+  str "/opam";
+  str "/url";
+  seq [str "/files/"; non_greedy (rep1 any); str ".install"; eos];
+])
 let pkg_descr = Re.(str "/descr")
 let pkg_change_re component = Re.(compile (seq [
   str "packages/"; group (rep1 (non_greedy any)); component
@@ -152,10 +176,16 @@ let try_infer_packages merge_dir =
 
 let try_install tmp pkgs =
   (* TODO: fix this terrible hack *)
-  let r = OpamProcess.run ~name:(Filename.concat tmp "install") "opam" [
-    "install" ; pkgs ;
-    "--yes" ; "--root="^(Filename.concat tmp "opam-install") ;
-  ] in
+  let env = OpamState.(
+    Array.of_list
+      (List.map (fun (k,v) -> k^"="^v)
+         (("OCAMLRUNPARAM","b")
+          ::("HOME",tmp)
+          ::(get_opam_env (load_env_state "ocamlot-try-install"))))
+  ) in
+  let () = Array.iter print_endline env in
+  let r = OpamProcess.run ~name:(Filename.concat tmp "install") ~env
+    "opam" ("install" :: "--yes" :: pkgs) in
   Continue (pkgs, r)
 (* Maybe once we tame opam's stdout/stderr...
   try
@@ -181,28 +211,45 @@ let run ?jobs prefix root_dir {action; packages; target} =
   let () = Printf.eprintf "OCAMLOT temp_dir %s made\n%!" tmp_name in
   let merge_name = Filename.concat tmp_name "opam-repository" in
   Unix.mkdir merge_name 0o700;
+  let set_opam_repo merge_dir =
+    (* add merged repository to opam *)
+    Client.REPOSITORY.add
+      (OpamRepositoryName.of_string merge_name)
+      `local merge_dir ~priority:None;
+    (* remove default repository from opam *)
+    Client.REPOSITORY.remove (OpamRepositoryName.of_string "default");
+    Printf.eprintf "OCAMLOT repo merge added\n%!";
+  in
   match begin
     (* initialize opam if necessary and alias target compiler *)
     let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
     begin match packages with
-      | Diff { base; head } ->
+      | Diff ({ base; head }, overlay) ->
+          clone_repo ~name:merge_name ~branch:base
+          >>= fun merge_dir ->
           try_merge ~merge_name ~base ~head
           >>= fun merge_dir ->
-          (* add merged repository to opam *)
-          Client.REPOSITORY.add
-            (OpamRepositoryName.of_string merge_name)
-            `local merge_dir ~priority:None;
-          (* remove default repository from opam *)
-          Client.REPOSITORY.remove (OpamRepositoryName.of_string "default");
-          Printf.eprintf "OCAMLOT repo merge added\n%!";
+          begin match overlay with
+            | None -> Continue merge_dir
+            | Some overlay -> try_merge ~merge_name ~base ~head:overlay
+          end
+          >>= fun merge_dir ->
+          set_opam_repo merge_dir;
           Continue merge_dir
           >>= try_infer_packages
-      | List pkgs ->
+      | List (pkgs, Some { base; head }) ->
+          clone_repo ~name:merge_name ~branch:base
+          >>= fun merge_dir ->
+          try_merge ~merge_name ~base ~head
+          >>= fun merge_dir ->
+          set_opam_repo merge_dir;
+          Continue (List.map OpamPackage.Name.of_string pkgs)
+      | List (pkgs, None) ->
           Continue (List.map OpamPackage.Name.of_string pkgs)
     end
     >>= fun packages ->
-    let pkgs = String.concat " " (List.map OpamPackage.Name.to_string packages) in
-    Printf.eprintf "OCAMLOT building %s\n%!" pkgs;
+    let pkgs = List.map OpamPackage.Name.to_string packages in
+    Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " pkgs);
     Continue pkgs
     >>= try_install tmp_name
   end with
@@ -210,7 +257,9 @@ let run ?jobs prefix root_dir {action; packages; target} =
         let duration = Time.(elapsed start (now ())) in
 
         let facts = Printf.sprintf "OCAMLOT \"opam install %s\" exited %d in %fs"
-          pkgs result.OpamProcess.r_code result.OpamProcess.r_duration in
+          (String.concat " " pkgs)
+          result.OpamProcess.r_code
+          result.OpamProcess.r_duration in
         let status = if result.OpamProcess.r_code = 0
           then begin (* clean up opam-install *)
             OpamSystem.command [ "rm"; "-rf"; Filename.concat tmp_name "opam-install" ];
