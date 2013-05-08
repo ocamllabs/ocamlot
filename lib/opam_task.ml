@@ -1,4 +1,5 @@
 module Client = OpamClient.SafeAPI
+open Repo
 
 type compiler = {
   c_version : string;
@@ -17,9 +18,9 @@ type target = {
 }
 
 type action = Check | Build (*| Test | Benchmark*)
-type diff = { base : Repo.git Repo.branch; head : Repo.git Repo.branch }
+type diff = { base : git branch; head : git branch }
 type packages =
-  | Diff of diff * Repo.git Repo.branch option
+  | Diff of diff * git branch option
   | List of string list * diff option
 
 type t = {
@@ -28,21 +29,15 @@ type t = {
   action : action;
 }
 
-type 'a process = Continue of 'a | Terminate of Result.output
-
-let (>>=) process f = match process with
-  | Continue env -> f env
-  | Terminate out -> Terminate out
-
 let string_of_action = function
   | Check -> "check"
   | Build -> "build"
 
-let string_of_diff { base; head } = Repo.(head.label^" onto "^base.label)
+let string_of_diff { base; head } = head.label^" onto "^base.label
 let string_of_packages = function
   | Diff (diff, None) -> string_of_diff diff
   | Diff (diff, Some overlay) ->
-      Repo.(overlay.label^" onto "^(string_of_diff diff))
+      overlay.label^" onto "^(string_of_diff diff)
   | List (pkglst, None) -> String.concat "," pkglst
   | List (pkglst, Some diff) ->
       (String.concat "," pkglst)^" from "^(string_of_diff diff)
@@ -94,44 +89,18 @@ let clone_opam ~jobs root tmp compiler =
   Printf.eprintf "OCAMLOT cloned opam\n%!";
   clone_dir
 
-let terminate_of_process_error e = OpamProcess.(
-  List.iter (fun l -> Printf.eprintf "ERR: %s\n" l) e.r_stderr;
-  Terminate Result.({
-    err=String.concat "\n" e.r_stderr;
-    out=String.concat "\n" e.r_stdout;
-    info=e.r_info;
-  })
-)
-
-let clone_repo ~name ~branch =
-  let dir = OpamFilename.Dir.of_string name in
-  let url = Uri.to_string Repo.(branch.repo.repo_url) in
-  let git_ref, ref_cmd = Repo.(match branch.name with
-    | Ref r -> r, []
-    | Commit (r, sha) -> r, [[ "git" ; "update-ref" ; r ; sha ]]
-  ) in
-  try
-    OpamFilename.in_dir dir Repo.(fun () -> OpamSystem.commands ([
-      [ "git" ; "clone" ; url ; "." ];
-    ]@ref_cmd@[
-      [ "git" ; "checkout" ; git_ref ];
-    ]));
-    Printf.eprintf "OCAMLOT repo clone %s\n%!" branch.Repo.label;
-    Continue dir
-  with OpamSystem.Process_error e -> terminate_of_process_error e
-
 let try_merge ~merge_name ~base ~head =
   let merge_dir = OpamFilename.Dir.of_string merge_name in
-  let head_url = Uri.to_string Repo.(head.repo.repo_url) in
+  let head_url = Uri.to_string head.repo.repo_url in
   try (* TODO: update-ref ? *)
-    OpamFilename.in_dir merge_dir Repo.(fun () -> OpamSystem.commands ([
+    OpamFilename.in_dir merge_dir (fun () -> OpamSystem.commands ([
       [ "git" ; "fetch" ; head_url ;
         match head.name with Ref h -> h^":"^h | Commit (h,_) -> h^":"^h ];
       [ "git" ; "merge" ; "--no-edit" ;
         match head.name with Ref h -> h | Commit (h,_) -> h ];
     ]));
     Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
-      head.Repo.label base.Repo.label;
+      head.label base.label;
     Continue merge_dir
   with
     | OpamSystem.Process_error e -> terminate_of_process_error e
@@ -151,7 +120,7 @@ let pkg_descr_re = pkg_change_re pkg_descr
 let try_infer_packages merge_dir =
   let mod_files = ref [] in
   try
-    OpamFilename.in_dir merge_dir Repo.(fun () ->
+    OpamFilename.in_dir merge_dir (fun () ->
       mod_files := List.filter (fun filename ->
         not (Re.execp pkg_descr_re filename)
       ) (OpamSystem.read_command_output
