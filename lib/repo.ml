@@ -6,7 +6,7 @@ type 'a t = {
  (* endpoint : endpoint; *)
 }
 type sha = string
-type reference = Head of string | Commit of string * sha
+type reference = Ref of string | Commit of string * sha
 type 'a branch = {
   repo : 'a t;
   name : reference;
