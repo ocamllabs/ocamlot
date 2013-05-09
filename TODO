@@ -8,6 +8,7 @@
   * work directory management
   * switch flag
   * repository flag
+  * output replay shell script
 * opam task
   * metadata check
   * mk-repo check
