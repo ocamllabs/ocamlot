@@ -2,17 +2,15 @@
   * github scanning
   * task generation
   * report storage
-  * pull request mirroring
   * work dispatch
 * cmd
   * work directory management
   * switch flag
-  * repository flag
   * output replay shell script
 * opam task
   * metadata check
   * mk-repo check
-  * pin version
+  * pin version (solved with v specific install?)
   * error classification
     * transient
     * missing dep
