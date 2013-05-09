@@ -16,6 +16,8 @@ type github_repo = {
 
 let version = "0.0.0"
 
+let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlot")
+
 let main_repo = {
   user = "OCamlPro";
   repo = "opam-repository";
@@ -31,10 +33,13 @@ let mirror_head_repo = {
   repo = "opam-repository";
 }
 
+let git_ssh_of_repo {user; repo} =
+  Repo.SSH (Uri.of_string "git@github.com", Uri.of_string (user^"/"^repo^".git"))
+
 let url_of_repo {user; repo} = Uri.of_string
   (sprintf "https://github.com/%s/%s.git" user repo)
 
-let load_auth {user;repo} =
+let load_auth ?(scopes=[]) {user;repo} =
   let name = user^"/"^repo in
   Jar.get ~name
   >>= function
@@ -42,10 +47,20 @@ let load_auth {user;repo} =
         Printf.eprintf "No Github Cookie Jar cookie '%s'\n" name;
         Printf.eprintf "Use 'git jar' to create a local token '%s'\n" name;
         exit 1
-    | Some auth -> return Github.(Monad.(
-      API.set_user_agent "ocamlot_cmd"
-      >> API.set_token (Token.of_string auth.Github_t.auth_token)
-    ))
+    | Some auth ->
+        let pred s = List.mem s auth.Github_t.auth_scopes in
+        if List.for_all pred scopes
+        then return Github.(Monad.(
+          API.set_user_agent "ocamlot_cmd"
+          >> API.set_token (Token.of_string auth.Github_t.auth_token)
+        ))
+        else fail
+          (Failure (sprintf "Expected %s/%s to have scopes: %s"
+                      user repo
+                      (String.concat ","
+                         (List.rev_map
+                            Github.Scope.string_of_scope
+                            (List.filter (fun s -> not (pred s)) scopes)))))
 
 let list_pulls closed = Lwt_main.run (
   let {user; repo} = main_repo in
@@ -86,11 +101,76 @@ let open_pull pull_id = Lwt_main.run (
         return ()
     with Not_found -> raise (MissingEnv "Missing BROWSER environment variable")
   ))))
-(*
-let mirror_pull pull_id = Lwt_main.run (
-  let {user; repo} = main_repo
-)
-*)
+
+let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
+  let rev_map fn =
+    let rec loop lst = Github.Monad.(function
+      | [] -> return lst
+      | x::xs -> fn x >>= fun ghob -> loop (ghob::lst) xs
+    )
+    in loop []
+  in
+  let {user; repo} = main_repo in
+  let repo_url = git_ssh_of_repo main_repo in
+  load_auth main_repo
+  >>= fun github ->
+  Github.(Monad.(run (
+    github >> (rev_map (fun num -> Pull.get ~user ~repo ~num ()) pull_ids)
+  )))
+  >>= fun pulls ->
+  let name = Repo.make_temp_dir ~root_dir:work_dir ~prefix:"mirror" in
+  Repo.(match begin
+    clone_repo ~name
+      ~branch:{repo={ url=Uri.of_string ""; repo_url };
+               name=Ref "master";
+               label=sprintf "%s/%s:%s" user repo "master";
+              }
+    >>= fun dir ->
+    let refspec = "refs/pull/*/head:refs/pull/*/head" in
+    fetch_refspec ~dir ~url:repo_url ~refspec
+    >>= fun dir ->
+    update_refs ~dir (List.rev_map (fun pull ->
+      Commit (sprintf "refs/heads/pull-%d" pull.pull_number,
+              pull.pull_base.branch_sha)) pulls)
+    >>= fun dir ->
+    let base_url = git_ssh_of_repo mirror_base_repo in
+    let refspec = "refs/heads/*:refs/heads/*" in
+    push_refspec ~dir ~url:base_url ~refspec
+    >>= fun dir ->
+    update_refs ~dir (List.rev_map (fun pull ->
+      Copy (sprintf "refs/heads/pull-%d" pull.pull_number,
+            sprintf "refs/pull/%d/head" pull.pull_number)) pulls)
+    >>= fun dir ->
+    let head_url = git_ssh_of_repo mirror_head_repo in
+    let refspec = "refs/heads/*:refs/heads/*" in
+    push_refspec ~dir ~url:head_url ~refspec
+  end with
+    | Continue _ -> return ()
+    | Terminate _ -> (* TODO: do *)
+        fail (Failure "something went wrong in mirror's clone+fetch+push")
+  )
+  >>= fun () ->
+  let {user; repo} = mirror_base_repo in
+  load_auth ~scopes:[`Public_repo] mirror_head_repo
+  >>= fun github ->
+  Github.(Monad.(run (
+    github
+    >>= fun () ->
+    let create_pull = Pull.create ~user ~repo in
+    rev_map (fun {pull_title; pull_body; pull_number} ->
+      let pull = {
+        new_pull_title=pull_title;
+        new_pull_body=Some pull_body;
+        new_pull_base=sprintf "pull-%d" pull_number;
+        new_pull_head=sprintf "%s:pull-%d" mirror_head_repo.user pull_number;
+      } in
+      Printf.eprintf "OCAMLOT creating pull:\n%s\n" (Yojson.Safe.prettify (Github_j.string_of_new_pull pull));
+      create_pull ~pull ()
+    ) pulls
+  )))
+  >>= fun new_pulls -> ignore new_pulls; return ()
+))
+
 type pull_part = Base | Head
 let branch_of_pull part pull = Github_t.(
   let pull_id = pull.pull_number in
@@ -99,16 +179,16 @@ let branch_of_pull part pull = Github_t.(
     | None -> raise (WTFGitHub (sprintf "pull %d lacks a base repo" pull_id))
     | Some repo -> repo
   in
-  let repo_url = Uri.of_string base.repo_clone_url in
+  let repo_url = Repo.URL (Uri.of_string base.repo_clone_url) in
   match part with
-    | Head -> let label = ref_base^"head" in Repo.({
+    | Head -> let gitref = ref_base^"head" in Repo.({
       repo={ url=Uri.of_string ""; repo_url };
-      name=Repo.Ref label; label=base.repo_full_name^":"^label
+      name=Repo.Ref gitref; label=base.repo_full_name^":"^gitref
     })
-    | Base -> let label = ref_base^"base" in Repo.({
+    | Base -> let gitref = ref_base^"base" in Repo.({
       repo={ url=Uri.of_string ""; repo_url };
-      name=Repo.Commit (label, pull.pull_base.branch_sha);
-      label=base.repo_full_name^":"^label;
+      name=Repo.Commit (gitref, pull.pull_base.branch_sha);
+      label=base.repo_full_name^":"^gitref;
     })
 )
 
@@ -124,12 +204,11 @@ let diff_of_pull pull_id = Lwt_main.run (
     })
   ))))
 
-let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlot")
 let () = OpamSystem.mkdir work_dir
 let build_testable testable repo_opt branch_opt =
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
-    let repo_url = Uri.(resolve "file" cwd (of_string rpath)) in
+    let repo_url = Repo.URL Uri.(resolve "file" cwd (of_string rpath)) in
     Some Repo.({repo ={ url=Uri.of_string ""; repo_url };
                 name=Ref name; label=sprintf "%s:%s" rpath name;
                })
@@ -151,7 +230,7 @@ let build_testable testable repo_opt branch_opt =
               base={
                 Repo.repo =Repo.({
                   url=Uri.of_string "";
-                  repo_url=url_of_repo main_repo
+                  repo_url=git_ssh_of_repo main_repo
                 });
                 name = Repo.Ref "master";
                 label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
@@ -208,11 +287,13 @@ let build_cmd =
                               ~docv:"REPO_BRANCH" ~doc:"branch of $(b,REPO_HREF) to merge last") in
   Term.(pure build_testable $ (pure testable_of_string $ testable_str) $ overlay $ overlay_branch),
   Term.info "build" ~doc:"build a Github OCamlPro/opam-repository pull request"
-(*
+
 let mirror_cmd =
-  Term.(pure mirror_pull $ pull_id),
-  Term.info "mirror" ~doc:"mirror the GitHub pull request"
-*)
+  let ids = Arg.(non_empty & pos_all int [] & info []
+                   ~docv:"PULL_IDS" ~doc:"Pull identifiers to mirror") in
+  Term.(pure mirror_pulls $ ids),
+  Term.info "mirror" ~doc:"mirror the GitHub pull request(s)"
+
 let default_cmd =
   let doc = "conduct integration tests for opam-repository" in
   Term.(ret (pure (`Help (`Pager, None)))),
@@ -225,7 +306,7 @@ let default_cmd =
      `P "Email bug reports to <mailto:infrastructure@lists.ocaml.org>, or report them online at <http://github.com/ocamllabs/ocamlot>."] in
   Term.info "ocamlot" ~version ~doc ~man
 
-let cmds = [list_cmd; show_cmd; open_cmd; build_cmd] (*; mirror_cmd] (* merge_cmd]*)*)
+let cmds = [list_cmd; show_cmd; open_cmd; build_cmd; mirror_cmd] (* merge_cmd]*)
 
 let () =
   match Term.eval_choice default_cmd cmds with
