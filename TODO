@@ -14,6 +14,9 @@
   * mk-repo check
   * pin version
   * error classification
+    * transient
+    * missing dep
+    * environmental
 * fix opam2web
 * policy
   * test downstream
