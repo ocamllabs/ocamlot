@@ -89,22 +89,6 @@ let clone_opam ~jobs root tmp compiler =
   Printf.eprintf "OCAMLOT cloned opam\n%!";
   clone_dir
 
-let try_merge ~merge_name ~base ~head =
-  let merge_dir = OpamFilename.Dir.of_string merge_name in
-  let head_url = Uri.to_string head.repo.repo_url in
-  try (* TODO: update-ref ? *)
-    OpamFilename.in_dir merge_dir (fun () -> OpamSystem.commands ([
-      [ "git" ; "fetch" ; head_url ;
-        match head.name with Ref h -> h^":"^h | Commit (h,_) -> h^":"^h ];
-      [ "git" ; "merge" ; "--no-edit" ;
-        match head.name with Ref h -> h | Commit (h,_) -> h ];
-    ]));
-    Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
-      head.label base.label;
-    Continue merge_dir
-  with
-    | OpamSystem.Process_error e -> terminate_of_process_error e
-
 (* TODO: log inference *)
 let pkg_semantic = Re.(alt [
   str "/opam";
@@ -174,10 +158,7 @@ let try_install tmp pkgs =
 let run ?jobs prefix root_dir {action; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
-  (* merge repositories *)
-  let tmp_name = Util.make_fresh_dir ~root_dir
-    ("ocamlot."^prefix^"."^(Time.date_to_string start)^".") in
-  let () = Printf.eprintf "OCAMLOT temp_dir %s made\n%!" tmp_name in
+  let tmp_name = make_temp_dir ~root_dir ~prefix in
   let merge_name = Filename.concat tmp_name "opam-repository" in
   Unix.mkdir merge_name 0o700;
   let set_opam_repo merge_dir =
@@ -192,15 +173,16 @@ let run ?jobs prefix root_dir {action; packages; target} =
   match begin
     (* initialize opam if necessary and alias target compiler *)
     let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
+    (* merge repositories *)
     begin match packages with
       | Diff ({ base; head }, overlay) ->
           clone_repo ~name:merge_name ~branch:base
-          >>= fun merge_dir ->
-          try_merge ~merge_name ~base ~head
-          >>= fun merge_dir ->
+          >>= fun dir ->
+          try_merge ~dir ~base ~head
+          >>= fun dir ->
           begin match overlay with
-            | None -> Continue merge_dir
-            | Some overlay -> try_merge ~merge_name ~base ~head:overlay
+            | None -> Continue dir
+            | Some overlay -> try_merge ~dir ~base ~head:overlay
           end
           >>= fun merge_dir ->
           set_opam_repo merge_dir;
@@ -208,10 +190,10 @@ let run ?jobs prefix root_dir {action; packages; target} =
           >>= try_infer_packages
       | List (pkgs, Some { base; head }) ->
           clone_repo ~name:merge_name ~branch:base
-          >>= fun merge_dir ->
-          try_merge ~merge_name ~base ~head
-          >>= fun merge_dir ->
-          set_opam_repo merge_dir;
+          >>= fun dir ->
+          try_merge ~dir ~base ~head
+          >>= fun dir ->
+          set_opam_repo dir;
           Continue (List.map OpamPackage.Name.of_string pkgs)
       | List (pkgs, None) ->
           Continue (List.map OpamPackage.Name.of_string pkgs)
