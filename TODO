@@ -2,11 +2,13 @@
   * github scanning
   * task generation
   * report storage
-  * work dispatch
 * cmd
   * work directory management
   * switch flag
   * output replay shell script
+  * isolate environment (chroot?)
+  * scan system compilers
+  * worker client
 * opam task
   * metadata check
   * mk-repo check

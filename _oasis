@@ -11,16 +11,16 @@ PostConfCommand: ./init_config.sh
 Library ocamlot
   Path: lib
   Findlibname: ocamlot
-  Modules: Github_hook, Github_listener, Http_server, Ocamlot_server, Ocamlot_cmd, Ocamlot, Util, Host, Time, Config, Persist, Opam_task, Repo
-  BuildDepends: lwt, uri, cohttp, github, re, re.str, cryptokit, opam.client
+  Modules: Github_hook, Github_listener, Http_server, Ocamlot, Resource, Ocamlot_cmd, Util, Host, Time, Config, Persist, Opam_task, Repo, Result
+  BuildDepends: lwt, uri, cohttp.lwt, github, re, re.str, cryptokit, opam.client
 
 Executable ocamlot
   Path: lib
   MainIs: ocamlot_cmd.ml
   Custom: true
-  CompiledObject: byte
+  CompiledObject: best
   Install: false
-  BuildDepends: ocamlot, github.unix, yojson
+  BuildDepends: ocamlot, github.unix, sexplib, sexplib.syntax
 
 Executable ocamlot_server
   Path: lib
@@ -28,4 +28,4 @@ Executable ocamlot_server
   Custom: true
   CompiledObject: best
   Install: false
-  BuildDepends: ocamlot
+  BuildDepends: ocamlot, github.unix, sexplib, sexplib.syntax
