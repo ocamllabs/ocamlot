@@ -23,7 +23,7 @@ let registry = Hashtbl.create 10
 let github_error_str (user, repo) =
   sprintf "GitHub connection for %s/%s failed:" user repo
 
-let make_listener service_fn ~root ~host ~port ~queue =
+let make_listener service_fn ~root ~host ~port t_resource =
   let base = Uri.make ~scheme:"http" ~host ~port ~path:("/"^root^"/") () in
   let routes = Re.(seq [str root; char '/'; notify_re]) in
   let path_match = Re.compile routes in
