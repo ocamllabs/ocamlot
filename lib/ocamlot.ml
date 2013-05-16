@@ -1,253 +1,428 @@
-(* queue-centric work dispatch so workers don't have to manage invariants *)
-module Fifo = struct
-  type 'a t = 'a Lwt_sequence.t (* left=front, right=back *)
-  type 'a slot = 'a Lwt_sequence.node
+open Sexplib.Std
 
-  let create = Lwt_sequence.create
-  let take = Lwt_sequence.take_opt_l
-  let put = Lwt_sequence.add_r
+module Uri = struct
+  include Uri
+  let t_of_sexp sexp =
+    of_string (string_of_sexp sexp)
+  let sexp_of_t uri = sexp_of_string (to_string uri)
 end
-module Event = Lwt_condition
 
-type instruction = Opam of Opam_task.t
-type worker_type = {
-  os : Host.os;
-  arch : Host.arch;
-}
+module Body    = Cohttp_lwt_unix.Body
+module Request = Cohttp_lwt_unix.Request
+module Server  = Cohttp_lwt_unix.Server
+module Cookie  = Cohttp.Cookie
+module Header  = Cohttp.Header
+
+type engagement = Time.t
+type history = engagement list
+
 type worker_id = int
-type task_id = int
-type event =
-  | Advertized of worker_type
-  | Refused of worker_id * string
-  | Deferred of string
-  | Started of worker_id
-  | Checked_in
-  | Failed of string
-  | Timed_out
-  | Cancelled of string
-  | Completed of Result.t
-type log = (Time.t * event) list
-type task = {
-  task_id : task_id;
-  instruction : instruction;
-  log : log;
-  timeout : float;
-  task_update : task -> event -> task;
-  task_completion : (task * Result.t) Event.t;
-  task_logging : log Event.t;
-  task_queue: queue;
-}
-and worker = {
-  worker_type : worker_type;
+
+type worker_message =
+  | Refuse of string
+  | Accept
+  | Check_in
+  | Fail of string
+  | Complete of Result.t
+with sexp
+
+type worker_action =
+  | Hibernate
+type worker = {
+  engagement : engagement;
+  cookie : string;
   worker_id : worker_id;
-  worker_offer : task -> unit;
-  (*
-  worker_evict : unit;
-  worker_cancel : unit;
-  *)
-  mutable queues : (queue * worker Fifo.slot) list;
+  worker_host : Host.t;
+  last_request : Time.t;
 }
-and command =
-  | Post of task
-  | Join of worker
-  | Leave of worker Fifo.slot
-and queue = {
-  queue_type : worker_type;
-  posted : task Fifo.t;
-  running : (task, worker) Hashtbl.t;
-  workers : worker Fifo.t;
-  commands : command Fifo.t;
-  queue_modification : queue Event.t;
+type worker_resource = (worker, worker_action) Resource.t
+
+type event =
+  | Advertized of Host.t
+  | Refused of worker_id * string
+  | Started of worker_id
+  | Checked_in of worker_id
+  | Failed of worker_id * string
+  | Timed_out of worker_id * Time.duration
+  | Cancelled of string
+  | Completed of worker_id * Result.t
+
+type log = (Time.t * event) list
+type job = Opam of Opam_task.t with sexp
+type task = {
+  log : log;
+  host : Host.t;
+  job : job;
 }
-type t = (worker_type, queue) Hashtbl.t
+type task_offer = Uri.t * job with sexp
 
-let offer_timeout_s = 1. (* compare gettimeofday and sleep *)
-let exec_timeout_s = 240. (* 4m *)
+type task_action =
+  | Worker of worker_id * worker_message
+  | Time_out of worker_id * Time.duration
+  | Cancel of string
+type task_resource = (task * requeue, task_action) Resource.t
+and requeue = Requeue of (task_resource -> unit)
 
-let make () = Hashtbl.create 4
+type goal_action =
+  | New_task of task_resource
+  | Update_task of Uri.t * task_action
+  | Update_subgoal of Uri.t * goal_action
 
-let mint_id mint = let id = !mint in mint := id + 1; id
+type goal = {
+  slug : string;
+  title : string;
+  descr : string;
+  subgoals : (goal, goal_action) Resource.index;
+  completed : task Resource.archive;
+  tasks : (task * requeue, task_action) Resource.index;
+  queue : task_resource Lwt_stream.t;
+  enqueue : task_resource -> unit;
+}
+and goal_resource = (goal, goal_action) Resource.t
 
+type t_action =
+  | New_worker of worker_resource
+  | Update_worker of Uri.t * worker_action
+  | New_goal of goal_resource
+  | Update_goal of Uri.t * goal_action
+type t = {
+  goals : (goal, goal_action) Resource.index;
+  outstanding : task_resource Lwt_stream.t;
+  workers : (worker, worker_action) Resource.index;
+  idle : task_resource Lwt.u Lwt_sequence.t;
+}
+type t_resource = (t, t_action) Resource.t
+
+let engagement = Time.now ()
+let sessions = Hashtbl.create 10 (* cookie -> worker URI *)
+let title = "ocamlot"
+
+let mint_id mint () = let id = !mint in incr mint; id
 let worker_mint = ref 0
-let new_worker_id () = mint_id worker_mint
+let new_worker_id = mint_id worker_mint
 
-let task_mint = ref 0
-let new_task_id () = mint_id task_mint
+let string_of_job = function
+  | Opam opam_task -> "opam => "^(Opam_task.to_string opam_task)
 
-let worker_type_of_opam_task t =
-  {os=Opam_task.(t.target.os); arch=Opam_task.(t.target.arch)}
+(* TODO: DO *)
+let html_escape s = s
 
-let worker_type_of_instruction = function
-  | Opam opam_task -> worker_type_of_opam_task opam_task
+let string_of_event = Printf.(function
+  | Advertized host -> sprintf "advertized for %s host" (Host.to_string host)
+  | Refused (worker_id, reason) -> sprintf
+      "refused by worker %d because '%s'" worker_id (html_escape reason)
+  | Started worker_id -> sprintf "started by worker %d" worker_id
+  | Checked_in worker_id -> sprintf "checked-in by worker %d" worker_id
+  | Failed (worker_id, reason) -> sprintf
+      "failed by worker %d because '%s'" worker_id (html_escape reason)
+  | Timed_out (worker_id, duration) -> sprintf
+      "timed-out worker %d after %s" worker_id (Time.duration_to_string duration)
+  | Cancelled reason -> sprintf
+      "cancelled because '%s'" reason
+  | Completed (worker_id, result) -> sprintf
+      "completed by worker %d with result: %s" worker_id
+    Result.(string_of_status (get_status result))
+)
 
-let string_of_worker_type {os; arch} =
-  Printf.sprintf "[OS: %s ARCH: %s]"
-    (Host.string_of_os os) (Host.string_of_arch arch)
-
-let queue_modified queue =
-  Event.broadcast queue.queue_modification queue
-(*
-let rec monitor_queue q () =
-    Lwt.(async (fun () -> catch
-      (fun () ->
-        match Fifo.get q.commands with
-          | Some (Post task) ->
-
-          | Some (Join worker) ->
-
-          | Some (Leave worker_slot) ->
-              let worker = Fifo.get worker_slot in
-              Fifo.remove worker_slot;
-              queue_modified q;
-          | None -> fail (Failure "command stream closed")
-      )
-      (fun exn -> Printf.eprintf
-      )
-    ));
-
-*)
-let queue_of_type queue t =
-  try Hashtbl.find queue t
-  with Not_found ->
-    let q = {queue_type=t;
-             posted=Fifo.create ();
-             running=Hashtbl.create 10;
-             workers=Fifo.create ();
-             commands=Fifo.create ();
-             queue_modification=Event.create ();
-            } in
-    Hashtbl.replace queue t q;
-(*    Lwt.async (monitor_queue q);*)
-    q
-
-let log_task event task =
-  let task = {task with log=(Time.now (), event)::task.log} in
-  Event.broadcast task.task_logging task.log;
-  task
-(*
-let schedule_work q ?timeout:exec_timeout_s instruction =
-  let worker_type = worker_type_of_instruction instruction in
-  let task_queue = queue_type worker_type in
-  let task_completion = Event.create () in
-  let task_logging = Event.create () in
-  let task_update task event =
-
+(* TODO: better search, yes it's linear right now *)
+let find_task t host =
+  let rec pull rql = match Lwt_stream.get_available_up_to 1 t.outstanding with
+    | [] -> (List.rev rql), None
+    | tr::_ ->
+        let (task, Requeue rq) = Resource.content tr in
+        if task.host = host (* TODO: 1st class pattern match *)
+        then (List.rev rql), Some tr
+        else pull ((tr, rq)::rql)
   in
-  let task = {
-    task_id=new_task_id ();
-    instruction;
-    log=[];
-    timeout;
-    task_update;
-    task_completion;
-    task_logging;
-    task_queue;
-  } in
-  let task = {instruction; status=Advertized} in
-  let node = Lwt_sequence.add_r task queue.posted in
-  Printf.eprintf "Scheduled \"%s\"\n%!" (string_of_instruction instruction);
-  queue_modified queue
-*)
-let worker_on_task task =
-  let queue = task.task_queue in
-  Hashtbl.find queue.running task
+  let rql, task_opt = pull [] in
+  List.iter (fun (tr, rq) -> rq tr) rql;
+  task_opt
 
-let start_task task =
-  let {worker_id} = worker_on_task task in
-  task.task_update task (Started worker_id)
+(* TODO: DO *)
+let update_worker worker action = worker
+let worker_renderer =
+  let render_html event =
+    let page worker = Printf.sprintf
+      "<html><head><title>Knight %d : %s</title></head><body><h1>Knight %d</h1><p>Last request: %s</p><p>%s</p></body></html>"
+      worker.worker_id title worker.worker_id
+      (Time.to_string worker.last_request)
+      (Host.to_string worker.worker_host)
+    in Resource.(match event with
+      | Create (worker, r) -> page worker
+      | Update (worker_action, r) -> page (content r)
+    ) in
+  let r = Hashtbl.create 1 in
+  Hashtbl.replace r (`text `html) render_html;
+  r
 
-let refuse_task task why =
-  let {worker_id} = worker_on_task task in
-  task.task_update task (Refused (worker_id, why))
+let lift_worker_to_t = Resource.(function
+  | Create (_, r) -> New_worker r
+  | Update (d, r) -> Update_worker (uri r, d)
+)
 
-let checkin_task task =
-  task.task_update task Checked_in
-
-let fail_task task why =
-  task.task_update task (Failed why)
-
-let complete_task task result =
-  task.task_update task (Completed result)
-(*
-let is_task_engaged = function
-  | {log=[]
-        |(_,   Advertized _
-             | Refused (_,_)
-             | Deferred _)::_} -> false
-  | {log=(_,   Started _
-             | Checked_in
-
-             | Failed _
-  | Timed_out
-  | Completed of result
-*)
-let defer_task queue task message =
-  let task = log_task (Deferred message) task in
-  let worker_type = worker_type_of_instruction task.instruction in
-  Printf.eprintf "%s %s\n%!"
-    (string_of_worker_type worker_type) message;
-  ignore (Fifo.put task queue.posted);
-  queue_modified queue
-(*
-let rec supervise worker task stream =
-
-*)(*
-let rec offer queue refusals node =
-  let task = Lwt_sequence.get node in
-  match Lwt_sequence.take_opt_l queue.workers with
-    | None ->
-        defer_task task "workers unavailable";
-
-    | Some worker ->
-        let first_worker = match first_worker with
-          | None -> worker.worker_id | Some id -> id
-        in
-        let stream, push = Lwt_stream.create () in
-        worker.worker_notify task push;
-        Lwt.(pick [
-          Lwt_unix.sleep offer_timeout_s
-          >>= begin fun () -> (* TODO: send eviction notice *)
-            List.iter (fun (q,node) ->
-              Lwt_sequence.remove node;
-              queue_modified q;
-            ) worker.queues;
-            worker.queues <- [];
-            Printf.eprintf "Worker %d timed out on %s/%s offer and was evicted\n%!"
-              worker.worker_id worker.worker_type.arch worker.worker_type.os;
-            return (Some refusals)
-          end;
-          Lwt_stream.get stream
-          >>= begin function
-            | None ->
-                worker.queues <- List.remove_assoc queue worker.queues;
-                (*let worker_node = Lwt_sequence.add_r worker queue.workers in
-                worker.queues <- (queue,worker_node)::queues;*)
-                return (Some (worker::refusals))
-            | Some ({status=Running _ | Completed} as task) ->
-                Lwt_sequence.remove node;
-                queue_modified queue;
-                return None
-          end
-        ]) >>= function
-          | Some refusals -> offer queue refusals node
-          | None ->
-  *)
-
-let register_worker ~queue ~arch ~os =
-  let worker_type = {os; arch} in
-  let queues = [queue_of_type queue worker_type] in
+let new_worker t_resource worker_host =
+  let t = Resource.content t_resource in
+  let cookie = Util.(hex_str_of_string (randomish_string 20)) in
   let worker_id = new_worker_id () in
-  {worker_type; worker_id; worker_offer=(fun _ -> ()); (* TODO: FIXME *)
-   queues=[]; (* TODO: FIXME insert, mutate *)
-  }
-(*
-let run worker = Lwt.(begin
-  pick (List.map (fun q -> Lwt_condition.wait q.new_work_event) worker.queues)
-  >>= Task.(function
-    | {task=OpamBuild {opam_task; opam_repo}; ack} ->
-        Lwt_mvar.put ack true
-        >>= fun () ->
+  let worker = {
+    engagement; cookie; worker_id; worker_host;
+    last_request = Time.now ();
+  } in
+  let worker_resource = Resource.index t.workers
+    worker update_worker worker_renderer
+  in
+  let () = Hashtbl.replace sessions cookie (Resource.uri worker_resource) in
+  Resource.bubble worker_resource t_resource lift_worker_to_t;
+  worker_resource
 
-  )
-end)
-*)
+let update_task (task,rq) action =
+  let now = Time.now () in
+  match action with
+    | Worker (wid, Refuse reason) ->
+        ({ task with log=(now, Refused (wid, reason))::task.log },rq)
+    | Worker (wid, Accept) ->
+        ({ task with log=(now, Started wid)::task.log },rq)
+    | Worker (wid, Check_in) ->
+        ({ task with log=(now, Checked_in wid)::task.log },rq)
+    | Worker (wid, Fail reason) ->
+        ({ task with log=(now, Failed (wid, reason))::task.log },rq)
+    | Worker (wid, Complete result) ->
+        ({ task with log=(now, Completed (wid, result))::task.log },rq)
+    | Time_out (wid, duration) ->
+        ({ task with log=(now, Timed_out (wid, duration))::task.log },rq)
+    | Cancel reason ->
+        ({ task with log=(now, Cancelled reason)::task.log },rq)
+let task_renderer =
+  let render_html event =
+    let log_event (time, event) =
+      Printf.sprintf "<li>%s at %s</li>"
+        (string_of_event event) (Time.to_string time)
+    in
+    let page { log; job } =
+      let job_descr = string_of_job job in
+      let (time, event) = List.hd log in
+      Printf.sprintf
+        "<html><head><title>%s : %s</title></head><body><h1>%s</h1><div id='update'>%s</div><div id='status'>%s</div>%s<ul>%s</ul></body></html>"
+        job_descr title job_descr
+        (Time.to_string time)
+        (string_of_event event)
+        (match event with
+          | Completed (wid, result) ->
+              Printf.sprintf "<div id='result'>%s</div>"
+                Result.(to_html result)
+          | _ -> "")
+        (String.concat "\n" (List.map log_event log))
+    in Resource.(match event with
+      | Create ((task, _), r) -> page task
+      | Update (_, r) -> page (fst (content r))
+    ) in
+  let r = Hashtbl.create 1 in
+  Hashtbl.replace r (`text `html) render_html;
+  r
+
+let host_of_job = function
+  | Opam opam_task -> Opam_task.(opam_task.target.host)
+
+let lift_task_to_goal = Resource.(function
+  | Create (_, r) -> New_task r
+  | Update (d, r) -> Update_task (uri r, d)
+)
+
+let queue_job goal_resource job =
+  let goal = Resource.content goal_resource in
+  let host = host_of_job job in
+  let task = {
+    log = [Time.now (), Advertized host];
+    host;
+    job;
+  } in
+  let task_resource = Resource.index goal.tasks
+    (task, Requeue goal.enqueue) update_task task_renderer
+  in
+  Resource.bubble task_resource goal_resource lift_task_to_goal;
+  task_resource
+
+let update_goal goal action = (match action with
+  | New_task tr -> goal.enqueue tr
+  | Update_task (uri, Worker (wid, Accept))
+  | Update_task (uri, Worker (wid, Check_in)) -> ()
+  | Update_task (uri, Worker (wid, (Refuse reason))) ->
+      let tr = Resource.remove uri goal.tasks in
+      goal.enqueue tr
+  | Update_task (uri, Worker (wid, (Fail reason))) ->
+      let tr = Resource.remove uri goal.tasks in
+      goal.enqueue tr
+  | Update_task (uri, Worker (wid, (Complete result))) ->
+      let tr = Resource.remove uri goal.tasks in
+      Resource.archive goal.completed fst tr
+  | Update_task (uri, Time_out (wid, duration)) ->
+      let tr = Resource.remove uri goal.tasks in
+      goal.enqueue tr
+  | Update_task (uri, Cancel reason) ->
+      let tr = Resource.remove uri goal.tasks in
+      Resource.archive goal.completed fst tr
+  | Update_subgoal (uri, subgoal_action) -> ()
+); goal
+
+let goal_renderer =
+  let render_html event =
+    let task tr =
+      let task = fst (Resource.content tr) in
+      let tm, status = List.hd task.log in
+      Printf.sprintf "<li>%s (%s) : %s</li>"
+        (string_of_event status) (Time.to_string tm) (string_of_job task.job)
+    in
+    let page goal = Printf.sprintf
+      "<html><head><title>%s : %s</title></head><body><h1>%s</h1><p>%s</p><ul>%s</ul></body></html>"
+      goal.title title goal.title goal.descr
+      (String.concat "\n" (List.rev_map task (Resource.to_list goal.tasks)))
+    in Resource.(match event with
+      | Create (goal, r) -> page goal
+      | Update (goal_action, r) -> page (content r)
+    ) in
+  let r = Hashtbl.create 1 in
+  Hashtbl.replace r (`text `html) render_html;
+  r
+
+let lift_goal_to_t = Resource.(function
+  | Create (_, r) -> New_goal r
+  | Update (d, r) -> Update_goal (uri r, d)
+)
+
+let new_goal t_resource goal =
+  let t = Resource.content t_resource in
+  let goal_resource = Resource.index t.goals goal update_goal goal_renderer in
+  Resource.bubble goal_resource t_resource lift_goal_to_t;
+  goal_resource
+
+let update_index index action = (match action with
+  | New_worker _ -> index
+  | Update_worker (_,_) -> index (* TODO: retire *)
+  | New_goal gr ->
+      let goal = Resource.content gr in
+      { index with
+        outstanding = Lwt_stream.choose [index.outstanding; goal.queue];
+  }
+  | Update_goal (_, _) -> index (* TODO: aggregate? *)
+)
+
+let index_renderer =
+  let render_html event =
+    let goal gr =
+      let goal = Resource.content gr in
+      Printf.sprintf
+        "<li><a href='%s'>%s</a></li>"
+        (Uri.to_string (Resource.uri gr))
+        goal.title
+    in
+    let worker wr =
+      let worker = Resource.content wr in
+      Printf.sprintf
+        "<li><a href='%s'>#%d %s</a></li>"
+        (Uri.to_string (Resource.uri wr))
+        worker.worker_id
+        (Host.to_string worker.worker_host)
+    in
+    let page t = Printf.sprintf
+      "<html><head><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p></body></html>"
+      title title
+      (String.concat "\n" (List.rev_map goal (Resource.to_list t.goals)))
+      (String.concat "\n" (List.rev_map worker (Resource.to_list t.workers)))
+      (Lwt_sequence.length t.idle)
+    in Resource.(match event with
+      | Create (t, r) -> page t
+      | Update (_, r) -> page (content r)
+    ) in
+  let r = Hashtbl.create 1 in
+  Hashtbl.replace r (`text `html) render_html;
+  r
+
+let make ~base =
+  let queue, enqueue = Lwt_stream.create () in
+  let slug = "integration" in
+  let generate_goal_uri goal =
+    Uri.(resolve "" base (of_string goal.slug))
+  in
+  let generate_subgoal_uri subgoal =
+    Uri.(resolve "" base (of_string (slug^"/"^subgoal.slug)))
+  in
+  let task_mint = ref 0 in
+  let new_task_id = mint_id task_mint in
+  let generate_task_uri task =
+    Uri.(resolve "" base
+           (of_string (Printf.sprintf "%s/task/%d" slug (new_task_id ()))))
+  in
+  let generate_worker_uri worker =
+    Uri.(resolve "" base
+           (of_string (Printf.sprintf "worker/%d" worker.worker_id)))
+  in
+  let integration = {
+    slug;
+    title="GitHub OPAM Repository Integration";
+    descr="The GitHub OPAM Repository Integration goal subscribes to GitHub"
+    ^" events, scans GitHub, and runs package build tasks.";
+    subgoals=Resource.create_index generate_subgoal_uri [];
+    completed=Resource.create_archive [];
+    tasks=Resource.create_index generate_task_uri [];
+    queue;
+    enqueue=(fun task_resource -> enqueue (Some task_resource));
+  } in
+  let goals = Resource.create_index generate_goal_uri [] in
+  let t = {
+    goals;
+    outstanding = integration.queue; (* TODO: choose *)
+    workers = Resource.create_index generate_worker_uri [];
+    idle = Lwt_sequence.create ();
+  } in
+  let t_resource = Resource.create base t update_index index_renderer in
+  let goal_resource = new_goal t_resource integration in
+  t_resource
+
+let worker_listener service_fn ~root ~host ~port t_resource =
+  let routes = Re.(seq [str root; eos]) in
+  let worker_id_cookie = "worker_id" in
+  let offer_task ~headers task_resource =
+    let (task,_) = Resource.content task_resource in
+    let uri = Resource.uri task_resource in
+    let body = string_of_sexp (sexp_of_task_offer (uri,task.job)) in
+    let open Lwt in
+    Server.respond_string ~headers ~status:`OK ~body ()
+    >>= Http_server.some_response
+  in
+  let handler conn_id ?body req = Lwt.(
+    if Request.params req <> ["queue",[]]
+    then return None
+    else let req_headers = Request.headers req in
+         let cookies = Cookie.Cookie_hdr.extract req_headers in
+         let headers = Header.init () in
+         let t = Resource.content t_resource in
+         (try
+            let ident = List.assoc worker_id_cookie cookies in
+            let uri = Hashtbl.find sessions ident in
+            return (headers, Resource.find t.workers uri)
+          with Not_found -> begin
+            Body.string_of_body body
+            >>= fun body ->
+            let host = Host.t_of_sexp (sexp_of_string body) in
+            let wr = new_worker t_resource host in
+            let worker = Resource.content wr in
+            let open Cookie.Set_cookie_hdr in
+            let cookie = make (worker_id_cookie,
+                               worker.cookie) in
+            let k, v = Cookie.Set_cookie_hdr.serialize cookie in
+            let headers = Header.add headers k v in
+            return (headers, wr)
+          end)
+       >>= fun (headers, wr) ->
+         let host = (Resource.content wr).worker_host in
+         match find_task t host with
+           | None ->
+               let t = Resource.content t_resource in
+               add_task_r t.idle
+               >>= offer_task ~headers
+           | Some task_resource -> offer_task ~headers task_resource
+  ) in
+  service_fn
+    ~routes
+    ~handler
+    ~startup:[]
