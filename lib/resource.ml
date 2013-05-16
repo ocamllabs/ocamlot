@@ -53,6 +53,9 @@ let render renderer ev rendering = Hashtbl.iter (fun t fn ->
   Hashtbl.replace rendering t (Lazy.from_fun (fun () -> fn ev))
 ) renderer
 
+let represent r media =
+  Lazy.force (Hashtbl.find r.rendering media)
+
 let stream r = Lwt_stream.clone r.updates
 
 let create uri content update renderer =
