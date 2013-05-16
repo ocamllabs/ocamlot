@@ -239,19 +239,19 @@ let build_testable testable repo_opt branch_opt =
             }))
         end
   in
-  let {Host.os; arch} = Host.detect () in
+  let host = Host.detect () in
   let task = Opam_task.({
     packages;
-    target={ arch; os; compiler={ c_version="4.00.1"; c_build="" }; };
+    target={ host; compiler={ c_version="4.00.1"; c_build="" }; };
     action=Build;
   }) in
   match Opam_task.run ~jobs:3 prefix work_dir task with
-    | { status=`Failed; duration; output } ->
+    | { status=Failed; duration; output } ->
         Printf.eprintf "%s\n%!" output.err;
         Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
           (Opam_task.to_string task)
           (Time.duration_to_string duration)
-    | { status=`Passed; duration; output } ->
+    | { status=Passed; duration; output } ->
         Printf.eprintf "OCAMLOT %s PASSED in %s\n%!"
           (Opam_task.to_string task)
           (Time.duration_to_string duration)
