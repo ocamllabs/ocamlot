@@ -1,5 +1,5 @@
-type t
-type duration
+type t with sexp
+type duration with sexp
 
 val min : t
 val now : unit -> t

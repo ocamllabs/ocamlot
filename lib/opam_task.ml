@@ -1,33 +1,35 @@
+open Sexplib.Std
+
 module Client = OpamClient.SafeAPI
 open Repo
 
 type compiler = {
   c_version : string;
   c_build   : string;
-}
+} with sexp
 
 type target = {
-  arch      : Host.arch;
-  os        : Host.os;
+  host : Host.t;
   compiler  : compiler;
 (*
   packages  : package list;
   depends   : package Set.t;
   extdepends: string;
 *)
-}
+} with sexp
 
-type action = Check | Build (*| Test | Benchmark*)
-type diff = { base : git branch; head : git branch }
+type action = Check | Build (*| Test | Benchmark*) with sexp
+type diff = { base : git branch; head : git branch } with sexp
 type packages =
   | Diff of diff * git branch option
   | List of string list * diff option
+with sexp
 
 type t = {
   packages : packages;
   target : target;
   action : action;
-}
+} with sexp
 
 let string_of_action = function
   | Check -> "check"
@@ -42,11 +44,10 @@ let string_of_packages = function
   | List (pkglst, Some diff) ->
       (String.concat "," pkglst)^" from "^(string_of_diff diff)
 
-let string_of_target { arch; os; compiler } =
-  Printf.sprintf "%s on %s (%s)"
+let string_of_target { host; compiler } =
+  Printf.sprintf "%s on %s"
     (compiler.c_version^compiler.c_build)
-    (Host.string_of_os os)
-    (Host.string_of_arch arch)
+    (Host.to_string host)
 
 let to_string { packages; target; action } =
   Printf.sprintf "[%s %s with %s]"
@@ -213,19 +214,22 @@ let run ?jobs prefix root_dir {action; packages; target} =
           result.OpamProcess.r_duration in
         let status = if result.OpamProcess.r_code = 0
           then begin (* clean up opam-install *)
-            OpamSystem.command [ "rm"; "-rf"; Filename.concat tmp_name "opam-install" ];
-            `Passed
-          end else `Failed
+            OpamSystem.command [ "rm"; "-rf";
+                                 Filename.concat tmp_name "opam-install" ];
+            Result.Passed
+          end else Result.Failed
         in
         Result.({ status; duration;
                   output={
-                    err=String.concat "\n" (facts::""::result.OpamProcess.r_stderr);
+                    err=String.concat "\n"
+                      (facts::""::result.OpamProcess.r_stderr);
                     out=String.concat "\n" result.OpamProcess.r_stdout;
                     info=result.OpamProcess.r_info};
                 })
     | Terminate output ->
         let duration = Time.(elapsed start (now ())) in
         (* clean up opam-install *)
-        OpamSystem.command [ "rm"; "-rf"; Filename.concat tmp_name "opam-install" ];
+        OpamSystem.command [ "rm"; "-rf";
+                             Filename.concat tmp_name "opam-install" ];
 
-        Result.({ status=`Failed; duration; output })
+        Result.({ status=Failed; duration; output })

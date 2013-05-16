@@ -1,5 +1,7 @@
-type t = float
-type duration = float
+open Sexplib.Std
+
+type t = float with sexp
+type duration = float with sexp
 
 let min = 0.
 let now () = Unix.gettimeofday ()

@@ -1,27 +1,38 @@
+open Sexplib.Std
+
+module Uri = struct
+  include Uri
+  let t_of_sexp sexp =
+    of_string (string_of_sexp sexp)
+  let sexp_of_t uri = sexp_of_string (to_string uri)
+end
+
 type endpoint = Github of Github_hook.endpoint
 
 type git =
   | SSH of Uri.t * Uri.t
   | URL of Uri.t
+with sexp
 
 type 'a t = {
   url : Uri.t;
   repo_url : 'a;
  (* endpoint : endpoint; *)
-}
+} with sexp
 
-type sha = string
+type sha = string with sexp
 
 type reference =
   | Ref of string
   | Commit of string * sha
   | Copy of string * string
+with sexp
 
 type 'a branch = {
   repo : 'a t;
   name : reference;
   label : string;
-}
+} with sexp
 
 type 'a process = Continue of 'a | Terminate of Result.output
 
@@ -33,14 +44,14 @@ let string_of_git = function
   | SSH (host, path) -> (Uri.to_string host)^":"^(Uri.to_string path)
   | URL url -> Uri.to_string url
 
-let terminate_of_process_error e = OpamProcess.(
+let terminate_of_process_error e =
+  let open OpamProcess in
   List.iter (fun l -> Printf.eprintf "ERR: %s\n" l) e.r_stderr;
   Terminate Result.({
     err=String.concat "\n" e.r_stderr;
     out=String.concat "\n" e.r_stdout;
     info=e.r_info;
   })
-)
 
 let update_ref_cmd = function
   | Ref r -> r, []
