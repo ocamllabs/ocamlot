@@ -86,6 +86,7 @@ type t_action =
   | New_goal of goal_resource
   | Update_goal of Uri.t * goal_action
 type t = {
+  resources : (Uri.t, (Resource.media_type -> string)) Hashtbl.t;
   goals : (goal, goal_action) Resource.index;
   outstanding : task_resource Lwt_stream.t;
   workers : (worker, worker_action) Resource.index;
@@ -295,18 +296,24 @@ let new_goal t_resource goal =
   Resource.bubble goal_resource t_resource lift_goal_to_t;
   goal_resource
 
-let update_index index action = (match action with
-  | New_worker _ -> index
-  | Update_worker (_,_) -> index (* TODO: retire *)
-  | New_goal gr ->
-      let goal = Resource.content gr in
-      { index with
-        outstanding = Lwt_stream.choose [index.outstanding; goal.queue];
-  }
-  | Update_goal (_, _) -> index (* TODO: aggregate? *)
+let update_t t action = (match action with
+  | New_worker wr ->
+      Resource.(Hashtbl.replace t.resources (uri wr) (represent wr));
+      t
+  | Update_worker (_,_) -> t (* TODO: retire *)
+  | New_goal gr -> Resource.(
+      let goal = content gr in
+      Hashtbl.replace t.resources (uri gr) (represent gr);
+      { t with
+        outstanding = Lwt_stream.choose [t.outstanding; goal.queue];
+      })
+  | Update_goal (_, New_task tr) ->
+      Resource.(Hashtbl.replace t.resources (uri tr) (represent tr));
+      t
+  | Update_goal (_, _) -> t (* TODO: aggregate? *)
 )
 
-let index_renderer =
+let t_renderer =
   let render_html event =
     let goal gr =
       let goal = Resource.content gr in
@@ -368,15 +375,41 @@ let make ~base =
     enqueue=(fun task_resource -> enqueue (Some task_resource));
   } in
   let goals = Resource.create_index generate_goal_uri [] in
+  let resources = Hashtbl.create 5 in
   let t = {
+    resources;
     goals;
     outstanding = integration.queue; (* TODO: choose *)
     workers = Resource.create_index generate_worker_uri [];
     idle = Lwt_sequence.create ();
   } in
-  let t_resource = Resource.create base t update_index index_renderer in
+  let t_resource = Resource.create base t update_t t_renderer in
+  let () = Resource.(
+    Hashtbl.replace resources (uri t_resource) (represent t_resource)
+  ) in
   let goal_resource = new_goal t_resource integration in
   t_resource
+
+let browser_listener service_fn ~root ~base t_resource =
+  let routes = Re.(str root) in
+  let t = Resource.content t_resource in
+  let html = `text `html in
+  let respond s = Lwt.(
+    Server.respond_string ~status:`OK ~body:s ()
+    >>= Http_server.some_response
+  ) in
+  let handler conn_id ?body req = Lwt.(
+    let req_uri = Uri.resolve "http" base (Request.uri req) in
+    try
+      let represent = Hashtbl.find t.resources req_uri in
+      respond (represent html)
+    with Not_found ->
+      return None
+  ) in
+  service_fn
+    ~routes
+    ~handler
+    ~startup:[]
 
 let worker_listener service_fn ~root ~host ~port t_resource =
   let routes = Re.(seq [str root; eos]) in
