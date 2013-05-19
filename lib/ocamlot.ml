@@ -425,7 +425,7 @@ let worker_listener service_fn ~root ~host ~port t_resource =
     >>= Http_server.some_response
   in
   let handler conn_id ?body req = Lwt.(
-    if Request.params req <> ["queue",[]]
+    if Request.params req <> ["queue",[]] || Request.meth req <> `POST
     then return None
     else let req_headers = Request.headers req in
          let cookies = Cookie.Cookie_hdr.extract req_headers in
