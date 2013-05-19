@@ -2,7 +2,7 @@ open Config
 
 let watch_list = ["ocamlot", "opam-repository"]
 
-let base = Uri.make ~scheme:"http" ~host ~port ()
+let base = Uri.make ~scheme:"http" ~host ~port ~path:"/" ()
 
 let ocamlot = Ocamlot.make ~base
 
@@ -25,8 +25,10 @@ let gh_http_server = Http_server.register_service http_server
                                  (fun (user, repo) ->
                                    attach gh_listener ~user ~repo)
                                  watch_list))
-let gh_event_server = Http_server.register_service http_server browser_listener
-let ocamlot_server = Http_server.register_service http_server worker_listener
+let gh_event_server = Http_server.register_service
+  gh_http_server browser_listener
+let ocamlot_server = Http_server.register_service
+  gh_event_server worker_listener
 ;;
 Lwt_unix.run (Lwt_list.iter_p (fun x -> x) [
   Http_server.(run ocamlot_server);
