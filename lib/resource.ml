@@ -73,7 +73,9 @@ let create uri content update renderer =
     updates;
     updated=(fun ev -> updated (Some ev));
   } in
-  render renderer (Create (content,r)) rendering;
+  let event = Create (content,r) in
+  render renderer event rendering;
+  r.updated event;
   r
 
 let update r d = match r.content with
