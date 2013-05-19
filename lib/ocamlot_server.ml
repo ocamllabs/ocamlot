@@ -1,5 +1,7 @@
 open Config
 
+let watch_list = ["ocamlot", "opam-repository"]
+
 let base = Uri.make ~scheme:"http" ~host ~port ()
 
 let ocamlot = Ocamlot.make ~base
@@ -12,11 +14,17 @@ let worker_listener = Ocamlot.worker_listener
   (Http_server.service "Worker Task Queue Listener")
   ~root:"" ~host ~port ocamlot
 
-let gh_listener = Github_listener.make_listener
+let gh_listener = Github_listener.make_listener ocamlot
+let gh_event_service = Github_listener.service gh_listener
   (Http_server.service "GitHub Listener")
-  ~root:"github" ~host ~port ocamlot
+
 let http_server = Http_server.make_server host port
-let gh_http_server = Http_server.register_service http_server gh_listener
+let gh_http_server = Http_server.register_service http_server
+  Github_listener.(gh_event_service
+                     ~startup:(List.map
+                                 (fun (user, repo) ->
+                                   attach gh_listener ~user ~repo)
+                                 watch_list))
 let gh_event_server = Http_server.register_service http_server browser_listener
 let ocamlot_server = Http_server.register_service http_server worker_listener
 ;;

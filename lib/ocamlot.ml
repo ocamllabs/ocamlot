@@ -344,12 +344,9 @@ let t_renderer =
   Hashtbl.replace r (`text `html) render_html;
   r
 
-let make ~base =
+let make_integration_goal t_resource ~title ~descr ~slug =
+  let base = Resource.uri t_resource in
   let queue, enqueue = Lwt_stream.create () in
-  let slug = "integration" in
-  let generate_goal_uri goal =
-    Uri.(resolve "" base (of_string goal.slug))
-  in
   let generate_subgoal_uri subgoal =
     Uri.(resolve "" base (of_string (slug^"/"^subgoal.slug)))
   in
@@ -359,27 +356,33 @@ let make ~base =
     Uri.(resolve "" base
            (of_string (Printf.sprintf "%s/task/%d" slug (new_task_id ()))))
   in
-  let generate_worker_uri worker =
-    Uri.(resolve "" base
-           (of_string (Printf.sprintf "worker/%d" worker.worker_id)))
-  in
   let integration = {
     slug;
-    title="GitHub OPAM Repository Integration";
-    descr="The GitHub OPAM Repository Integration goal subscribes to GitHub"
-    ^" events, scans GitHub, and runs package build tasks.";
+    title;
+    descr;
     subgoals=Resource.create_index generate_subgoal_uri [];
     completed=Resource.create_archive [];
     tasks=Resource.create_index generate_task_uri [];
     queue;
     enqueue=(fun task_resource -> enqueue (Some task_resource));
   } in
+  new_goal t_resource integration
+
+let make ~base =
+  let queue, _ = Lwt_stream.create () in
+  let generate_worker_uri worker =
+    Uri.(resolve "" base
+           (of_string (Printf.sprintf "worker/%d" worker.worker_id)))
+  in
+  let generate_goal_uri goal =
+    Uri.(resolve "" base (of_string goal.slug))
+  in
   let goals = Resource.create_index generate_goal_uri [] in
   let resources = Hashtbl.create 5 in
   let t = {
     resources;
     goals;
-    outstanding = integration.queue; (* TODO: choose *)
+    outstanding = queue;
     workers = Resource.create_index generate_worker_uri [];
     idle = Lwt_sequence.create ();
   } in
@@ -387,7 +390,6 @@ let make ~base =
   let () = Resource.(
     Hashtbl.replace resources (uri t_resource) (represent t_resource)
   ) in
-  let goal_resource = new_goal t_resource integration in
   t_resource
 
 let browser_listener service_fn ~root ~base t_resource =

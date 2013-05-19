@@ -1,11 +1,12 @@
-type user = string
-type repo = string
-type repo_id = user * repo
+type t
 
 val github : unit Github.Monad.t
-val watch_list : repo_id list
-val make_listener :
+
+val make_listener : Ocamlot.t_resource -> t
+
+val attach : t -> user:string -> repo:string -> unit Lwt.t
+
+val service :
+  t ->
   (routes:Re.t ->
-   handler:Http_server.response option Lwt.t Http_server.handler ->
-   startup:unit Lwt.t list -> 'a) ->
-  root:string -> host:string -> port:int -> Ocamlot.t_resource -> 'a
+   handler:Http_server.response option Lwt.t Http_server.handler -> 'a) -> 'a

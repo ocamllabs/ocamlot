@@ -4,14 +4,6 @@ let host = ""
 (* The port on which to listen *)
 let port = 8080
 
-(* The user/pass combo with which to access GitHub *)
-let github_user = ""
-let github_pass = ""
-
-(* The GitHub application ID and secret *)
-let github_app_id = ""
-let github_app_secret = ""
-
 (* The local path of the store directories *)
 let public_store_path = "store/public"
 let private_store_path = "store/private"
