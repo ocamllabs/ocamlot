@@ -402,6 +402,8 @@ let browser_listener service_fn ~root ~base t_resource =
   ) in
   let handler conn_id ?body req = Lwt.(
     let req_uri = Uri.resolve "http" base (Request.uri req) in
+    Printf.eprintf "BROWSER: %s\n%!" (Uri.to_string req_uri);
+    Hashtbl.iter (fun uri _ -> Printf.eprintf "       : %s\n%!" (Uri.to_string uri)) t.resources;
     try
       let represent = Hashtbl.find t.resources req_uri in
       respond (represent html)
