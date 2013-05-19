@@ -56,13 +56,7 @@ let to_string { packages; target; action } =
     (string_of_target target)
 
 let initialize_opam ~jobs =
-  let repo_name = OpamRepositoryName.default in
-  let repo_address = OpamRepository.default_address in
-  let repo_kind = `http in
-  let repo_priority = 0 in
-  let repository = OpamTypes.({
-    repo_name; repo_address; repo_kind; repo_priority;
-  }) in
+  let repository = OpamRepository.default () in
   Client.init repository OpamCompiler.system ~jobs
     `sh (OpamFilename.of_string "") `no
 
