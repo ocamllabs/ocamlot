@@ -270,7 +270,8 @@ let goal_renderer =
     let task tr =
       let task = fst (Resource.content tr) in
       let tm, status = List.hd task.log in
-      Printf.sprintf "<li>%s (%s) : %s</li>"
+      Printf.sprintf "<li><a href='%s'>%s (%s) : %s</a></li>"
+        (Uri.to_string (Resource.uri tr))
         (string_of_event status) (Time.to_string tm) (string_of_job task.job)
     in
     let page goal = Printf.sprintf
