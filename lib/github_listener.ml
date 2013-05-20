@@ -28,28 +28,40 @@ let notify_query = "notify"
 let github_error_str ~user ~repo =
   sprintf "GitHub connection for %s/%s failed:" user repo
 
+let make_pull_tasks goal_resource pull = (*Ocamlot.(
+  queue_job goal_resource Opam_task.(
+    Opam 
+  ))*) Lwt.return ()
+
 let notification_handler user repo conn_id ?body req =
+  (* push, pull req, pull req comment, status *)
   let body = sprintf "Got event for %s/%s\n" user repo in
   Lwt.(Server.respond_string ~status:`OK ~body ()
        >>= S.some_response)
 
+let scan endpoint goal_resource = Lwt.(
+  Github.(Monad.(run Github_t.(
+    let {Github_hook.github; user; repo} = endpoint in
+    github
+    >> Pull.for_repo ~user ~repo ())))
+  >>= Lwt_list.iter_p (make_pull_tasks goal_resource)
+
 let attach listener ~user ~repo =
   let name = user^"/"^repo in
   let goal_resource = Ocamlot.make_integration_goal listener.t
-    ~title:(sprintf "Test GitHub Repository %s" name)
-    ~descr:(sprintf "The goal is to monitor and test the repository <a href='https://github.com/%s'>%s</a>." name name)
-    ~slug:name
+    ~title:(sprintf "Test Package Repository %s" name)
+    ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
+    ~slug:"github/"^name
   in
   let uri = Resource.uri goal_resource in Lwt.(
     Jar.get ~name
     >>= function
       | None -> (*TODO: why doesn't this show up? *) fail (TokenMissing name)
       | Some auth ->
-          Github_hook.connect Github.(
-            Monad.(
-              github
-              >> API.set_token (Token.of_string auth.Github_t.auth_token)
-            ))
+          let github = Github.(Monad.(
+            github >> API.set_token (Token.of_string auth.Github_t.auth_token)))
+          in
+          Github_hook.connect github
             listener.registry
             (Uri.resolve "" uri (Uri.of_string ("?"^notify_query)))
             ((user,repo), notification_handler user repo)
@@ -71,7 +83,7 @@ let attach listener ~user ~repo =
                   (github_error_str ~user ~repo);
                 return ()
             | {status=Connected} ->
-                return ()
+                scan endpoint goal_resource
           )
   )
 
