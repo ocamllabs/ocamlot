@@ -39,9 +39,7 @@ let service name ~routes ~handler ~startup =
   { name; routes; handler; startup }
 
 let make_dispatch services =
-  let routes = List.map (fun s ->
-    Re.(compile (seq [char '/'; s.routes])), s
-  ) services in
+  let routes = List.map (fun s -> Re.compile s.routes, s) services in
   fun conn_id ?body req ->
     let rec cascade = function
       | [] -> let rec fix =
@@ -59,13 +57,6 @@ let register_service server service =
   let services = service::server.services in
   let dispatch = make_dispatch services in
   { server with services; dispatch }
-
-(*    
-    match path with
-      | "/" -> Pages.index registry
-      | path -> begin
-      end
-*)
   
 let run server =
   let port = server.port in
