@@ -18,6 +18,10 @@ type target = {
 *)
 } with sexp
 
+(* TODO: put somewhere better *)
+type pull_part = Base | Head
+exception WTFGitHub of string
+
 type action = Check | Build (*| Test | Benchmark*) with sexp
 type diff = { base : git branch; head : git branch } with sexp
 type packages =
@@ -30,6 +34,34 @@ type t = {
   target : target;
   action : action;
 } with sexp
+
+(* BEGIN TODO: put somewhere better *)
+let branch_of_pull part pull = Github_t.(
+  let pull_id = pull.pull_number in
+  let ref_base = "refs/pull/"^(string_of_int pull_id)^"/" in
+  let base = match pull.pull_base.branch_repo with
+    | None -> raise (WTFGitHub
+                       (Printf.sprintf "pull %d lacks a base repo" pull_id))
+    | Some repo -> repo
+  in
+  let repo_url = Repo.URL (Uri.of_string base.repo_clone_url) in
+  match part with
+    | Head -> let gitref = ref_base^"head" in Repo.({
+      repo={ url=Uri.of_string ""; repo_url };
+      reference=Repo.Ref gitref; label=base.repo_full_name^":"^gitref
+    })
+    | Base -> let gitref = ref_base^"base" in Repo.({
+      repo={ url=Uri.of_string ""; repo_url };
+      reference=Repo.Commit (gitref, pull.pull_base.branch_sha);
+      label=base.repo_full_name^":"^gitref;
+    })
+)
+
+let diff_of_pull pull = {
+  base=branch_of_pull Base pull;
+  head=branch_of_pull Head pull;
+}
+(* END *)
 
 let string_of_action = function
   | Check -> "check"
@@ -171,7 +203,7 @@ let run ?jobs prefix root_dir {action; packages; target} =
     (* merge repositories *)
     begin match packages with
       | Diff ({ base; head }, overlay) ->
-          clone_repo ~name:merge_name ~branch:base
+          clone_repo ~name:merge_name ~commit:base
           >>= fun dir ->
           try_merge ~dir ~base ~head
           >>= fun dir ->
@@ -184,7 +216,7 @@ let run ?jobs prefix root_dir {action; packages; target} =
           Continue merge_dir
           >>= try_infer_packages
       | List (pkgs, Some { base; head }) ->
-          clone_repo ~name:merge_name ~branch:base
+          clone_repo ~name:merge_name ~commit:base
           >>= fun dir ->
           try_merge ~dir ~base ~head
           >>= fun dir ->

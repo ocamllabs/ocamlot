@@ -7,8 +7,6 @@ module Uri = struct
   let sexp_of_t uri = sexp_of_string (to_string uri)
 end
 
-type endpoint = Github of Github_hook.endpoint
-
 type git =
   | SSH of Uri.t * Uri.t
   | URL of Uri.t
@@ -17,7 +15,6 @@ with sexp
 type 'a t = {
   url : Uri.t;
   repo_url : 'a;
- (* endpoint : endpoint; *)
 } with sexp
 
 type sha = string with sexp
@@ -25,13 +22,13 @@ type sha = string with sexp
 type reference =
   | Ref of string
   | Commit of string * sha
-  | Copy of string * string
+  | Copy of string * reference
 with sexp
 
 type 'a branch = {
   repo : 'a t;
-  name : reference;
   label : string;
+  reference : reference;
 } with sexp
 
 type 'a process = Continue of 'a | Terminate of Result.output
@@ -53,10 +50,12 @@ let terminate_of_process_error e =
     info=e.r_info;
   })
 
-let update_ref_cmd = function
+let rec update_ref_cmd = function
   | Ref r -> r, []
   | Commit (r, sha) -> r, [[ "git" ; "update-ref" ; r ; sha ]]
-  | Copy (a, b) -> a, [[ "git" ; "update-ref" ; a ; b ]]
+  | Copy (a, b) ->
+      let b, cmd = update_ref_cmd b in
+      a, cmd@[[ "git" ; "update-ref" ; a ; b ]]
 
 let update_refs ~dir refs =
   OpamFilename.in_dir dir (fun () ->
@@ -65,17 +64,17 @@ let update_refs ~dir refs =
     ) [] refs));
   Continue dir
 
-let clone_repo ~name ~branch =
+let clone_repo ~name ~commit =
   let dir = OpamFilename.Dir.of_string name in
-  let url = string_of_git branch.repo.repo_url in
-  let git_ref, ref_cmd = update_ref_cmd branch.name in
+  let url = string_of_git commit.repo.repo_url in
+  let git_ref, ref_cmd = update_ref_cmd commit.reference in
   try
     OpamFilename.in_dir dir (fun () -> OpamSystem.commands ([
       [ "git" ; "clone" ; url ; "." ];
     ]@ref_cmd@[
       [ "git" ; "checkout" ; git_ref ];
     ]));
-    Printf.eprintf "OCAMLOT repo clone %s\n%!" branch.label;
+    Printf.eprintf "OCAMLOT repo clone %s\n%!" commit.label;
     Continue dir
   with OpamSystem.Process_error e -> terminate_of_process_error e
 
@@ -106,13 +105,14 @@ let push_refspec ~dir ~url ~refspec =
   with OpamSystem.Process_error e -> terminate_of_process_error e
 
 let try_merge ~dir ~base ~head =
-  let refspec = match head.name with Ref h | Commit (h,_) | Copy (h,_) -> h^":"^h in
+  let refspec = match head.reference with
+    | Ref h | Commit (h,_) | Copy (h,_) -> h^":"^h in
   fetch_refspec ~dir ~url:head.repo.repo_url ~refspec
   >>= fun dir ->
   try (* TODO: update-ref ? *)
     OpamFilename.in_dir dir (fun () -> OpamSystem.command [
       "git" ; "merge" ; "--no-edit" ;
-      (match head.name with Ref h | Commit (h,_) | Copy (h,_) -> h);
+      (match head.reference with Ref h | Commit (h,_) | Copy (h,_) -> h);
     ]);
       Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
         head.label base.label;

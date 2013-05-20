@@ -28,10 +28,19 @@ let notify_query = "notify"
 let github_error_str ~user ~repo =
   sprintf "GitHub connection for %s/%s failed:" user repo
 
-let make_pull_tasks goal_resource pull = (*Ocamlot.(
+let make_pull_tasks goal_resource pull = ignore Ocamlot.(
   queue_job goal_resource Opam_task.(
-    Opam 
-  ))*) Lwt.return ()
+    Opam {
+      packages=Diff (diff_of_pull pull, None);
+      target={host=Host.({os=Linux; arch=X86_64});
+              compiler={c_version="4.00.1";
+                        c_build="";
+                       };
+             };
+      action=Build;
+    }
+  ));
+  Lwt.return ()
 
 let notification_handler user repo conn_id ?body req =
   (* push, pull req, pull req comment, status *)
@@ -44,14 +53,14 @@ let scan endpoint goal_resource = Lwt.(
     let {Github_hook.github; user; repo} = endpoint in
     github
     >> Pull.for_repo ~user ~repo ())))
-  >>= Lwt_list.iter_p (make_pull_tasks goal_resource)
+  >>= Lwt_list.iter_p (make_pull_tasks goal_resource))
 
 let attach listener ~user ~repo =
   let name = user^"/"^repo in
   let goal_resource = Ocamlot.make_integration_goal listener.t
     ~title:(sprintf "Test Package Repository %s" name)
     ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
-    ~slug:"github/"^name
+    ~slug:("github/"^name)
   in
   let uri = Resource.uri goal_resource in Lwt.(
     Jar.get ~name

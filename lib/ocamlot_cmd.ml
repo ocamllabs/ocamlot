@@ -5,7 +5,6 @@ open Result
 
 module Jar = Github_cookie_jar
 
-exception WTFGitHub of string
 exception MissingEnv of string
 
 type testable = Pull of int | Packages of string list
@@ -121,8 +120,8 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
   let name = Repo.make_temp_dir ~root_dir:work_dir ~prefix:"mirror" in
   Repo.(match begin
     clone_repo ~name
-      ~branch:{repo={ url=Uri.of_string ""; repo_url };
-               name=Ref "master";
+      ~commit:{repo={ url=Uri.of_string ""; repo_url };
+               reference=Ref "master";
                label=sprintf "%s/%s:%s" user repo "master";
               }
     >>= fun dir ->
@@ -139,7 +138,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
     >>= fun dir ->
     update_refs ~dir (List.rev_map (fun pull ->
       Copy (sprintf "refs/heads/pull-%d" pull.pull_number,
-            sprintf "refs/pull/%d/head" pull.pull_number)) pulls)
+            Ref (sprintf "refs/pull/%d/head" pull.pull_number))) pulls)
     >>= fun dir ->
     let head_url = git_ssh_of_repo mirror_head_repo in
     let refspec = "refs/heads/*:refs/heads/*" in
@@ -171,38 +170,13 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
   >>= fun new_pulls -> ignore new_pulls; return ()
 ))
 
-type pull_part = Base | Head
-let branch_of_pull part pull = Github_t.(
-  let pull_id = pull.pull_number in
-  let ref_base = "refs/pull/"^(string_of_int pull_id)^"/" in
-  let base = match pull.pull_base.branch_repo with
-    | None -> raise (WTFGitHub (sprintf "pull %d lacks a base repo" pull_id))
-    | Some repo -> repo
-  in
-  let repo_url = Repo.URL (Uri.of_string base.repo_clone_url) in
-  match part with
-    | Head -> let gitref = ref_base^"head" in Repo.({
-      repo={ url=Uri.of_string ""; repo_url };
-      name=Repo.Ref gitref; label=base.repo_full_name^":"^gitref
-    })
-    | Base -> let gitref = ref_base^"base" in Repo.({
-      repo={ url=Uri.of_string ""; repo_url };
-      name=Repo.Commit (gitref, pull.pull_base.branch_sha);
-      label=base.repo_full_name^":"^gitref;
-    })
-)
-
-let diff_of_pull pull_id = Lwt_main.run (
+let diff_of_pull pull_id = Opam_task.diff_of_pull (Lwt_main.run (
   let {user; repo} = main_repo in
   load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
-    >>= fun pull -> return Opam_task.({
-      base=branch_of_pull Base pull;
-      head=branch_of_pull Head pull;
-    })
-  ))))
+  )))))
 
 let () = OpamSystem.mkdir work_dir
 let build_testable testable repo_opt branch_opt =
@@ -210,7 +184,7 @@ let build_testable testable repo_opt branch_opt =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
     let repo_url = Repo.URL Uri.(resolve "file" cwd (of_string rpath)) in
     Some Repo.({repo ={ url=Uri.of_string ""; repo_url };
-                name=Ref name; label=sprintf "%s:%s" rpath name;
+                reference=Ref name; label=sprintf "%s:%s" rpath name;
                })
   in
   let branch_opt = match repo_opt, branch_opt with
@@ -232,7 +206,7 @@ let build_testable testable repo_opt branch_opt =
                   url=Uri.of_string "";
                   repo_url=git_ssh_of_repo main_repo
                 });
-                name = Repo.Ref "master";
+                reference=Repo.Ref "master";
                 label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
               };
               head;
