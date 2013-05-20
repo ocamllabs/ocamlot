@@ -141,7 +141,7 @@ let connect github registry url ((user,repo),handler) = Github.(Github_t.(Lwt.(
   >>= fun endpoint ->
   register registry {endpoint with status=Pending};
   join [
-    check_connectivity registry endpoint 5.;
+    check_connectivity registry endpoint 10.;
     Github.(Monad.(run (github >> Hook.test ~user ~repo ~num:endpoint.id ())));
   ]
   >>= fun () -> return (Hashtbl.find registry (Uri.path url))
