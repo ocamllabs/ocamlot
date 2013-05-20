@@ -1,6 +1,9 @@
 open Config
 
-let watch_list = ["ocamlot", "opam-repository"]
+let watch_list = [
+  "ocamlot", "opam-repository";
+  "ocamlot-dev", "opam-repository";
+]
 
 let base = Uri.make ~scheme:"http" ~host ~port ~path:"/" ()
 
