@@ -2,7 +2,7 @@
 
 open Cohttp
 module CL = Cohttp_lwt_unix
-module CLB = CL.Body
+module CLB = Cohttp_lwt_body
 module S = Http_server
 
 type status = Indicated | Pending | Timeout | Unauthorized | Connected
@@ -34,7 +34,7 @@ let verification_failure = Lwt.(
   >>= S.some_response)
 
 let verify_event req body secret = Lwt.(
-  match CL.Request.header req "x-hub-signature" with
+  match Header.get (Request.headers req) "x-hub-signature" with
     | Some sign ->
         let hmac_label = Re_str.string_before sign 5 in
         let hmac_hex = Re_str.string_after sign 5 in

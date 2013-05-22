@@ -3,7 +3,7 @@ open Printf
 open Cohttp
 
 module CL = Cohttp_lwt_unix
-module CLB = CL.Body
+module CLB = Cohttp_lwt_body
 module Req = CL.Request
 
 type response = CL.Response.t * CLB.t
@@ -28,7 +28,8 @@ let not_found_service = {
   name="Default404";
   routes=Re.any;
   handler=Lwt.(fun conn_id ?body req ->
-    let body = sprintf "404: Resource '%s' not found\n" (Req.path req) in
+    let body = sprintf "404: Resource '%s' not found\n"
+      (Uri.path (Req.uri req)) in
     CL.Server.respond_string ~status:`Not_found ~body ()
     >>= some_response
   );
@@ -45,7 +46,7 @@ let make_dispatch services =
       | [] -> let rec fix =
                 {service=not_found_service; continue=fun () -> fix} in fix
       | (rt,service)::rest ->
-          if Re.execp rt (Req.path req)
+          if Re.execp rt (Uri.path (Req.uri req))
           then {service; continue=fun () -> cascade rest}
           else cascade rest
     in cascade routes
@@ -78,7 +79,7 @@ let run server =
   let config = { CL.Server.callback=callback server.dispatch; conn_closed } in
   let startup_delay = Lwt_unix.sleep 0.2 in
   Lwt_list.iter_p (fun x -> x) Lwt.(
-    (CL.server ~address:"0.0.0.0" ~port config)
+    (CL.Server.create ~address:"0.0.0.0" ~port config)
     ::(List.rev_map (fun service ->
       startup_delay
       >>= fun () -> Lwt_list.iter_p (fun x -> x) service.startup

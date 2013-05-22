@@ -7,7 +7,7 @@ module Uri = struct
   let sexp_of_t uri = sexp_of_string (to_string uri)
 end
 
-module Body    = Cohttp_lwt_unix.Body
+module Body    = Cohttp_lwt_body
 module Request = Cohttp_lwt_unix.Request
 module Server  = Cohttp_lwt_unix.Server
 module Cookie  = Cohttp.Cookie
@@ -428,7 +428,8 @@ let worker_listener service_fn ~root t_resource =
     >>= Http_server.some_response
   in
   let handler conn_id ?body req = Lwt.(
-    if Request.params req <> ["queue",[]] || Request.meth req <> `POST
+    if Uri.query (Request.uri req) <> ["queue",[]]
+      || Request.meth req <> `POST
     then return None
     else let req_headers = Request.headers req in
          let cookies = Cookie.Cookie_hdr.extract req_headers in
@@ -437,6 +438,7 @@ let worker_listener service_fn ~root t_resource =
          (try
             let ident = List.assoc worker_id_cookie cookies in
             let uri = Hashtbl.find sessions ident in
+            (* TODO: if post body contains different profile? *)
             return (headers, Resource.find t.workers uri)
           with Not_found -> begin
             Body.string_of_body body

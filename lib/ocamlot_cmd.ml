@@ -3,6 +3,8 @@ open Cmdliner
 open Lwt
 open Result
 
+module Client = Cohttp_lwt_unix.Client
+module Body = Cohttp_lwt_body
 module Jar = Github_cookie_jar
 
 exception MissingEnv of string
@@ -178,6 +180,17 @@ let diff_of_pull pull_id = Opam_task.diff_of_pull (Lwt_main.run (
     >> Pull.get ~user ~repo ~num:pull_id ()
   )))))
 
+let print_result task = function
+  | { status=Failed; duration; output } ->
+      Printf.eprintf "%s\n%!" output.err;
+      Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
+        (Opam_task.to_string task)
+        (Time.duration_to_string duration)
+  | { status=Passed; duration; output } ->
+      Printf.eprintf "OCAMLOT %s PASSED in %s\n%!"
+        (Opam_task.to_string task)
+        (Time.duration_to_string duration)
+
 let () = OpamSystem.mkdir work_dir
 let build_testable testable repo_opt branch_opt =
   let repo_of_path rpath name =
@@ -219,16 +232,28 @@ let build_testable testable repo_opt branch_opt =
     target={ host; compiler={ c_version="4.00.1"; c_build="" }; };
     action=Build;
   }) in
-  match Opam_task.run ~jobs:3 prefix work_dir task with
-    | { status=Failed; duration; output } ->
-        Printf.eprintf "%s\n%!" output.err;
-        Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
-          (Opam_task.to_string task)
-          (Time.duration_to_string duration)
-    | { status=Passed; duration; output } ->
-        Printf.eprintf "OCAMLOT %s PASSED in %s\n%!"
-          (Opam_task.to_string task)
-          (Time.duration_to_string duration)
+  print_result task (Opam_task.run ~jobs:3 prefix work_dir task)
+
+let work_url url_str =
+  let url = Uri.resolve "" (Uri.of_string url_str) (Uri.of_string "?queue") in
+  let body = Body.body_of_string (
+    Sexplib.Std.string_of_sexp (
+      Host.(sexp_of_t (detect ()))
+    )
+  ) in Lwt_main.run (
+    Client.post ?body url
+    >>= function
+      | Some (resp, body) ->
+          Body.string_of_body body
+          >>= fun s ->
+          let sexp = Sexplib.Std.sexp_of_string s in
+          let (uri, Ocamlot.Opam task) = Ocamlot.task_offer_of_sexp sexp in
+          print_result task (Opam_task.run ~jobs:3 "" work_dir task);
+          return ()
+      | None -> (* TODO: connection closed without response? *)
+          Printf.eprintf "OCAMLOT worker didn't get a response\n";
+          return ()
+  )
 
 (* CLI *)
 let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")
@@ -268,6 +293,12 @@ let mirror_cmd =
   Term.(pure mirror_pulls $ ids),
   Term.info "mirror" ~doc:"mirror the GitHub pull request(s)"
 
+let work_cmd =
+  let url = Arg.(required & pos 0 (some string) None & info []
+                   ~docv:"OCAMLOT_URL" ~doc:"URL of task queue resource") in
+  Term.(pure work_url $ url),
+  Term.info "work" ~doc:"queue for work"
+
 let default_cmd =
   let doc = "conduct integration tests for opam-repository" in
   Term.(ret (pure (`Help (`Pager, None)))),
@@ -280,7 +311,10 @@ let default_cmd =
      `P "Email bug reports to <mailto:infrastructure@lists.ocaml.org>, or report them online at <http://github.com/ocamllabs/ocamlot>."] in
   Term.info "ocamlot" ~version ~doc ~man
 
-let cmds = [list_cmd; show_cmd; open_cmd; build_cmd; mirror_cmd] (* merge_cmd]*)
+let cmds = [
+  list_cmd; show_cmd; open_cmd;
+  build_cmd; mirror_cmd; work_cmd;
+]
 
 let () =
   match Term.eval_choice default_cmd cmds with

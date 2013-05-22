@@ -105,8 +105,9 @@ let service {t; registry} service_fn =
   let root = Uri.path base in
   let routes = Re.(seq [str root; notify_re]) in
   let handler conn_id ?body req = Lwt.(
-    if Request.params req <> ["notify",[]] then return None
-    else let path = Request.path req in
+    let uri = Request.uri req in
+    if Uri.query uri <> ["notify",[]] then return None
+    else let path = Uri.path uri in
          try
            let endpoint = Hashtbl.find registry path in
            Github_hook.(endpoint.handler conn_id ?body req)
