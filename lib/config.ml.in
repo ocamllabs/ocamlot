@@ -1,6 +1,9 @@
 (* The host name by which this service is reachable from GitHub *)
 let host = ""
 
+(* The port for remote requests *)
+let outside_port = 443
+
 (* The port on which to listen *)
 let port = 8080
 

@@ -5,7 +5,7 @@ let watch_list = [
   "ocamlot-dev", "opam-repository";
 ]
 
-let base = Uri.make ~scheme:"http" ~host ~port ~path:"/" ()
+let base = Uri.make ~scheme:"https" ~host ~port:outside_port ~path:"/" ()
 
 let ocamlot = Ocamlot.make ~base
 
@@ -15,7 +15,7 @@ let browser_listener = Ocamlot.browser_listener
 
 let worker_listener = Ocamlot.worker_listener
   (Http_server.service "Worker Task Queue Listener")
-  ~root:"/" ~host ~port ocamlot
+  ~root:"/" ocamlot
 
 let gh_listener = Github_listener.make_listener ocamlot
 let gh_event_service = Github_listener.service gh_listener

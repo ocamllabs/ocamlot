@@ -416,7 +416,7 @@ let browser_listener service_fn ~root ~base t_resource =
     ~handler
     ~startup:[]
 
-let worker_listener service_fn ~root ~host ~port t_resource =
+let worker_listener service_fn ~root t_resource =
   let routes = Re.(seq [str root; eos]) in
   let worker_id_cookie = "worker_id" in
   let offer_task ~headers task_resource =
