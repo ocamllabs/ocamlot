@@ -65,7 +65,9 @@ let attach listener ~user ~repo =
   let uri = Resource.uri goal_resource in Lwt.(
     Jar.get ~name
     >>= function
-      | None -> (*TODO: why doesn't this show up? *) fail (TokenMissing name)
+      | None -> (*TODO: why doesn't this exception show up? *)
+          eprintf "TOKEN MISSING: %s\n%!" name;
+          fail (TokenMissing name)
       | Some auth ->
           let github = Github.(Monad.(
             github >> API.set_token (Token.of_string auth.Github_t.auth_token)))
