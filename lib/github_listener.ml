@@ -22,7 +22,7 @@ let github = Github.API.set_user_agent github_ua
 
 let path_seg = Re.(rep1 (compl [char '/']))
 let notify_re =
-  Re.(seq [group path_seg; char '/'; group path_seg])
+  Re.(seq [str "github/"; group path_seg; char '/'; group path_seg])
 let notify_query = "notify"
 
 let github_error_str ~user ~repo =
@@ -66,15 +66,19 @@ let attach listener ~user ~repo =
     Jar.get ~name
     >>= function
       | None -> (*TODO: why doesn't this exception show up? *)
-          eprintf "TOKEN MISSING: %s\n%!" name;
+          eprintf "GITHUB TOKEN MISSING: %s\n%!" name;
           fail (TokenMissing name)
       | Some auth ->
           let github = Github.(Monad.(
             github >> API.set_token (Token.of_string auth.Github_t.auth_token)))
           in
+          let callback_url = Uri.resolve "" uri
+            (Uri.of_string ("?"^notify_query)) in
+          eprintf "Connecting GitHub to callback %s\n%!"
+            (Uri.to_string callback_url);
           Github_hook.connect github
             listener.registry
-            (Uri.resolve "" uri (Uri.of_string ("?"^notify_query)))
+            callback_url
             ((user,repo), notification_handler user repo)
           >>= fun endpoint -> Github_hook.(match endpoint with
             | {status=Indicated} ->
@@ -108,7 +112,7 @@ let service {t; registry} service_fn =
   let routes = Re.(seq [str root; notify_re]) in
   let handler conn_id ?body req = Lwt.(
     let uri = Request.uri req in
-    if Uri.query uri <> ["notify",[]] then return None
+    if Uri.query uri <> [notify_query,[]] then return None
     else let path = Uri.path uri in
          try
            let endpoint = Hashtbl.find registry path in

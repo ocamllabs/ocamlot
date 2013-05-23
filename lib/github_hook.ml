@@ -58,7 +58,7 @@ let new_hook url = Github_t.(
     new_hook_config={
       web_hook_config_url=Uri.to_string url;
       web_hook_config_content_type="json";
-      web_hook_config_insecure_ssl="false";
+      web_hook_config_insecure_ssl="1";
       web_hook_config_secret=Some secret;
     };
   })
@@ -131,12 +131,15 @@ let connect github registry url ((user,repo),handler) = Github.(Github_t.(Lwt.(
     >>= fun hooks ->
     let points_to_us h =
       h.hook_config.web_hook_config_url = (Uri.to_string url)
-    in begin match List.filter points_to_us hooks with
-      | h::_ -> endpoint_of_hook github h user repo handler
-      | [] -> let hook = new_hook url in
-              Hook.create ~user ~repo ~hook ()
-              >>= fun h -> endpoint_of_hook github h user repo handler
-    end
+    in List.fold_left (fun m h ->
+      m >>= fun () ->
+      if points_to_us h then Hook.delete ~user ~repo ~num:h.hook_id ()
+      else return ()
+    ) (return ()) hooks
+    >>= fun () ->
+    let hook = new_hook url in
+    Hook.create ~user ~repo ~hook ()
+    >>= fun h -> endpoint_of_hook github h user repo handler
   ))
   >>= fun endpoint ->
   register registry {endpoint with status=Pending};
