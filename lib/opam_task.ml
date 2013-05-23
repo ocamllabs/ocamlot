@@ -18,73 +18,29 @@ type target = {
 *)
 } with sexp
 
-(* TODO: put somewhere better *)
-type pull_part = Base | Head
-exception WTFGitHub of string
-
-type action = Check | Build (*| Test | Benchmark*) with sexp
-type diff = { base : git branch; head : git branch } with sexp
-type packages =
-  | Diff of diff * git branch option
-  | List of string list * diff option
-with sexp
+type action = Check | Build (* | Test | Benchmark*) with sexp
 
 type t = {
-  packages : packages;
+  diff : diff;
+  packages : string list;
   target : target;
   action : action;
 } with sexp
 
-(* BEGIN TODO: put somewhere better *)
-let branch_of_pull part pull = Github_t.(
-  let pull_id = pull.pull_number in
-  let ref_base = "refs/pull/"^(string_of_int pull_id)^"/" in
-  let base = match pull.pull_base.branch_repo with
-    | None -> raise (WTFGitHub
-                       (Printf.sprintf "pull %d lacks a base repo" pull_id))
-    | Some repo -> repo
-  in
-  let repo_url = Repo.URL (Uri.of_string base.repo_clone_url) in
-  match part with
-    | Head -> let gitref = ref_base^"head" in Repo.({
-      repo={ url=Uri.of_string ""; repo_url };
-      reference=Repo.Ref gitref; label=base.repo_full_name^":"^gitref
-    })
-    | Base -> let gitref = ref_base^"base" in Repo.({
-      repo={ url=Uri.of_string ""; repo_url };
-      reference=Repo.Commit (gitref, pull.pull_base.branch_sha);
-      label=base.repo_full_name^":"^gitref;
-    })
-)
-
-let diff_of_pull pull = {
-  base=branch_of_pull Base pull;
-  head=branch_of_pull Head pull;
-}
-(* END *)
-
 let string_of_action = function
   | Check -> "check"
   | Build -> "build"
-
-let string_of_diff { base; head } = head.label^" onto "^base.label
-let string_of_packages = function
-  | Diff (diff, None) -> string_of_diff diff
-  | Diff (diff, Some overlay) ->
-      overlay.label^" onto "^(string_of_diff diff)
-  | List (pkglst, None) -> String.concat "," pkglst
-  | List (pkglst, Some diff) ->
-      (String.concat "," pkglst)^" from "^(string_of_diff diff)
 
 let string_of_target { host; compiler } =
   Printf.sprintf "%s on %s"
     (compiler.c_version^compiler.c_build)
     (Host.to_string host)
 
-let to_string { packages; target; action } =
-  Printf.sprintf "[%s %s with %s]"
+let to_string { diff; packages; target; action } =
+  Printf.sprintf "[%s %s %s with %s]"
     (string_of_action action)
-    (string_of_packages packages)
+    (String.concat "," packages)
+    (string_of_diff diff)
     (string_of_target target)
 
 let initialize_opam ~jobs =
@@ -116,44 +72,6 @@ let clone_opam ~jobs root tmp compiler =
   Printf.eprintf "OCAMLOT cloned opam\n%!";
   clone_dir
 
-(* TODO: log inference *)
-let pkg_semantic = Re.(alt [
-  str "/opam";
-  str "/url";
-  seq [str "/files/"; non_greedy (rep1 any); str ".install"; eos];
-])
-let pkg_descr = Re.(str "/descr")
-let pkg_change_re component = Re.(compile (seq [
-  str "packages/"; group (rep1 (non_greedy any)); component
-]))
-let pkg_sem_re = pkg_change_re pkg_semantic
-let pkg_descr_re = pkg_change_re pkg_descr
-let try_infer_packages merge_dir =
-  let mod_files = ref [] in
-  try
-    OpamFilename.in_dir merge_dir (fun () ->
-      mod_files := List.filter (fun filename ->
-        not (Re.execp pkg_descr_re filename)
-      ) (OpamSystem.read_command_output
-           [ "git" ; "diff" ; "--name-only" ; "HEAD~1" ; "HEAD" ]);
-      let packages = OpamPackage.Name.(Set.of_list (List.map (fun filename ->
-        of_string Re.(get (exec pkg_sem_re filename) 1)
-      ) !mod_files)) in
-      Continue (OpamPackage.Name.Set.elements packages)
-    )
-  with
-    | Not_found ->
-        let non_package_updates = List.filter (fun filename ->
-          not (Re.execp pkg_sem_re filename)
-        ) !mod_files in
-        Terminate Result.({
-          err=Printf.sprintf "Pull request modifies non-packages:\n%s\n"
-            (String.concat "\n" non_package_updates);
-          out="";
-          info="";
-        })
-    | OpamSystem.Process_error e -> terminate_of_process_error e
-
 let try_install tmp pkgs =
   (* TODO: fix this terrible hack *)
   let env = OpamState.(
@@ -182,7 +100,7 @@ let try_install tmp pkgs =
     )
 *)
 
-let run ?jobs prefix root_dir {action; packages; target} =
+let run ?jobs prefix root_dir {action; diff; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
   let tmp_name = make_temp_dir ~root_dir ~prefix in
@@ -201,34 +119,11 @@ let run ?jobs prefix root_dir {action; packages; target} =
     (* initialize opam if necessary and alias target compiler *)
     let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
     (* merge repositories *)
-    begin match packages with
-      | Diff ({ base; head }, overlay) ->
-          clone_repo ~name:merge_name ~commit:base
-          >>= fun dir ->
-          try_merge ~dir ~base ~head
-          >>= fun dir ->
-          begin match overlay with
-            | None -> Continue dir
-            | Some overlay -> try_merge ~dir ~base ~head:overlay
-          end
-          >>= fun merge_dir ->
-          set_opam_repo merge_dir;
-          Continue merge_dir
-          >>= try_infer_packages
-      | List (pkgs, Some { base; head }) ->
-          clone_repo ~name:merge_name ~commit:base
-          >>= fun dir ->
-          try_merge ~dir ~base ~head
-          >>= fun dir ->
-          set_opam_repo dir;
-          Continue (List.map OpamPackage.Name.of_string pkgs)
-      | List (pkgs, None) ->
-          Continue (List.map OpamPackage.Name.of_string pkgs)
-    end
-    >>= fun packages ->
-    let pkgs = List.map OpamPackage.Name.to_string packages in
-    Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " pkgs);
-    Continue pkgs
+    try_collapse ~name:merge_name diff
+    >>= fun merge_dir ->
+    set_opam_repo merge_dir;
+    Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
+    Continue packages
     >>= try_install tmp_name
   end with
     | Continue (pkgs, result) ->
@@ -259,3 +154,13 @@ let run ?jobs prefix root_dir {action; packages; target} =
                              Filename.concat tmp_name "opam-install" ];
 
         Result.({ status=Failed; duration; output })
+
+let tasks_of_packages targets action diff packages =
+  List.fold_left (fun tasks package ->
+    List.rev_append (List.rev_map (fun target -> {
+      diff;
+      packages=[package];
+      target;
+      action;
+    }) targets) tasks
+  ) [] packages

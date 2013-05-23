@@ -172,7 +172,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
   >>= fun new_pulls -> ignore new_pulls; return ()
 ))
 
-let diff_of_pull pull_id = Opam_task.diff_of_pull (Lwt_main.run (
+let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
   let {user; repo} = main_repo in
   load_auth main_repo
   >>= fun github -> Github.(Monad.(run Github_t.(
@@ -180,7 +180,7 @@ let diff_of_pull pull_id = Opam_task.diff_of_pull (Lwt_main.run (
     >> Pull.get ~user ~repo ~num:pull_id ()
   )))))
 
-let print_result task = function
+let print_result (Ocamlot.Opam task) = function
   | { status=Failed; duration; output } ->
       Printf.eprintf "%s\n%!" output.err;
       Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
@@ -191,48 +191,60 @@ let print_result task = function
         (Opam_task.to_string task)
         (Time.duration_to_string duration)
 
+let execute ~jobs prefix work_dir = function
+  | Ocamlot.Opam opam_task ->
+      Opam_task.run ~jobs prefix work_dir opam_task
+
 let () = OpamSystem.mkdir work_dir
 let build_testable testable repo_opt branch_opt =
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
     let repo_url = Repo.URL Uri.(resolve "file" cwd (of_string rpath)) in
-    Some Repo.({repo ={ url=Uri.of_string ""; repo_url };
-                reference=Ref name; label=sprintf "%s:%s" rpath name;
-               })
+    Repo.({repo ={ url=Uri.of_string ""; repo_url };
+           reference=Ref name; label=sprintf "%s:%s" rpath name;
+          })
   in
   let branch_opt = match repo_opt, branch_opt with
-    | None, None -> None
-    | Some rpath, None -> repo_of_path rpath "master"
-    | None, Some bname -> repo_of_path (Uri.to_string (url_of_repo main_repo)) bname
-    | Some rpath, Some bname -> repo_of_path rpath bname
-  in
-  let prefix, packages = match testable with
-    | Pull pull_id ->
-        string_of_int pull_id, Opam_task.Diff (diff_of_pull pull_id, branch_opt)
-    | Packages pkglst ->
-        begin match branch_opt with
-          | None -> String.concat "-" pkglst, Opam_task.List (pkglst, None)
-          | Some head -> String.concat "-" pkglst,
-            Opam_task.(List (pkglst, Some {
-              base={
-                Repo.repo =Repo.({
-                  url=Uri.of_string "";
-                  repo_url=git_ssh_of_repo main_repo
-                });
-                reference=Repo.Ref "master";
-                label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
-              };
-              head;
-            }))
-        end
+    | None, None -> []
+    | Some rpath, None -> [repo_of_path rpath "master"]
+    | None, Some bname ->
+        [repo_of_path (Uri.to_string (url_of_repo main_repo)) bname]
+    | Some rpath, Some bname -> [repo_of_path rpath bname]
   in
   let host = Host.detect () in
-  let task = Opam_task.({
-    packages;
-    target={ host; compiler={ c_version="4.00.1"; c_build="" }; };
-    action=Build;
+  (* TODO: detect compiler environment *)
+  let target = Opam_task.({
+    host; compiler={ c_version="4.00.1"; c_build="" };
   }) in
-  print_result task (Opam_task.run ~jobs:3 prefix work_dir task)
+  let local_tasks = match testable with
+    | Pull pull_id ->
+        let diff = branch_opt@(diff_of_pull pull_id) in
+        let prefix = string_of_int pull_id in
+        let packages = Opam_repo.packages_of_diff prefix work_dir diff in
+        List.map (fun opam_task ->
+          prefix, Ocamlot.Opam opam_task
+        ) Opam_task.(tasks_of_packages [target] Build diff packages)
+    | Packages packages ->
+        let base = {
+          Repo.repo = Repo.({
+            url=Uri.of_string "";
+            repo_url=git_ssh_of_repo main_repo
+          });
+          reference=Repo.Ref "master";
+          label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
+        } in
+        let diff = branch_opt@[base] in
+        let prefix = String.concat "-" packages in
+        List.map (fun opam_task ->
+          prefix, Ocamlot.Opam opam_task
+        ) Opam_task.(tasks_of_packages [target] Build diff packages)
+  in
+  let executions = List.rev_map (fun (prefix, task) ->
+    task, execute ~jobs:3 prefix work_dir task
+  ) local_tasks in
+  List.iter (fun (task, result) ->
+    print_result task result
+  ) executions
 
 let work_url url_str =
   let url = Uri.resolve "" (Uri.of_string url_str) (Uri.of_string "?queue") in
@@ -247,8 +259,11 @@ let work_url url_str =
           Body.string_of_body body
           >>= fun s ->
           let sexp = Sexplib.Std.sexp_of_string s in
-          let (uri, Ocamlot.Opam task) = Ocamlot.task_offer_of_sexp sexp in
-          print_result task (Opam_task.run ~jobs:3 "" work_dir task);
+          let (task_uri, task) = Ocamlot.task_offer_of_sexp sexp in
+          (* TODO: cookie jar, refuse or start, check-in, complete *)
+          
+          let result = execute ~jobs:3 "" work_dir task in
+          print_result task result;
           return ()
       | None -> (* TODO: connection closed without response? *)
           Printf.eprintf "OCAMLOT worker didn't get a response\n";

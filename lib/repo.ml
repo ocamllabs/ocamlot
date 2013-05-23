@@ -31,11 +31,18 @@ type 'a branch = {
   reference : reference;
 } with sexp
 
+type diff = git branch list with sexp
+
 type 'a process = Continue of 'a | Terminate of Result.output
 
 let (>>=) process f = match process with
   | Continue env -> f env
   | Terminate out -> Terminate out
+
+let rec string_of_diff = function
+  | [] -> ""
+  | b::[] -> b.label
+  | b::bs -> b.label^" onto "^(string_of_diff bs)
 
 let string_of_git = function
   | SSH (host, path) -> (Uri.to_string host)^":"^(Uri.to_string path)
@@ -118,3 +125,16 @@ let try_merge ~dir ~base ~head =
         head.label base.label;
       Continue dir
   with OpamSystem.Process_error e -> terminate_of_process_error e
+
+let try_collapse ~name = function
+  | [] -> Continue (OpamFilename.Dir.of_string name)
+  | bl -> begin
+    let diffl = List.rev bl in
+    let base = List.hd diffl in
+    let rec merge diffl dir = match diffl with
+      | [] -> Continue dir
+      | head::bs -> try_merge ~dir ~base ~head >>= (merge bs)
+    in
+    clone_repo ~name ~commit:base
+    >>= (merge (List.tl diffl))
+  end

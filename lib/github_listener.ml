@@ -24,23 +24,13 @@ let path_seg = Re.(rep1 (compl [char '/']))
 let notify_re =
   Re.(seq [str "github/"; group path_seg; char '/'; group path_seg])
 let notify_query = "notify"
+let targets = []
+
+let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlotd")
+let () = OpamSystem.mkdir work_dir
 
 let github_error_str ~user ~repo =
   sprintf "GitHub connection for %s/%s failed:" user repo
-
-let make_pull_tasks goal_resource pull = ignore Ocamlot.(
-  queue_job goal_resource Opam_task.(
-    Opam {
-      packages=Diff (diff_of_pull pull, None);
-      target={host=Host.({os=Linux; arch=X86_64});
-              compiler={c_version="4.00.1";
-                        c_build="";
-                       };
-             };
-      action=Build;
-    }
-  ));
-  Lwt.return ()
 
 let notification_handler user repo conn_id ?body req =
   (* push, pull req, pull req comment, status *)
@@ -48,12 +38,21 @@ let notification_handler user repo conn_id ?body req =
   Lwt.(Server.respond_string ~status:`OK ~body ()
        >>= S.some_response)
 
+(* TODO: packages_of_diff task, status checking *)
 let scan endpoint goal_resource = Lwt.(
   Github.(Monad.(run Github_t.(
     let {Github_hook.github; user; repo} = endpoint in
-    github
-    >> Pull.for_repo ~user ~repo ())))
-  >>= Lwt_list.iter_p (make_pull_tasks goal_resource))
+    github >> Pull.for_repo ~user ~repo ())))
+  >>= fun pulls -> List.iter (fun pull ->
+    let diff = Opam_repo.diff_of_pull pull in
+    let prefix = string_of_int pull.Github_t.pull_number in
+    let packages = Opam_repo.packages_of_diff prefix work_dir diff in
+    List.iter (fun task ->
+      ignore Ocamlot.(queue_job goal_resource (Opam task))
+    ) Opam_task.(tasks_of_packages targets Build diff packages)
+  );
+  return ()
+)
 
 let attach listener ~user ~repo =
   let name = user^"/"^repo in
