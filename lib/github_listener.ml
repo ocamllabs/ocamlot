@@ -55,7 +55,7 @@ let scan endpoint goal_resource = Lwt.(
     List.iter (fun task ->
       ignore Ocamlot.(queue_job goal_resource (Opam task))
     ) Opam_task.(tasks_of_packages targets Build diff packages)
-  );
+  ) pulls;
   return ()
 )
 
