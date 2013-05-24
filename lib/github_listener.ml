@@ -24,7 +24,12 @@ let path_seg = Re.(rep1 (compl [char '/']))
 let notify_re =
   Re.(seq [str "github/"; group path_seg; char '/'; group path_seg])
 let notify_query = "notify"
-let targets = []
+let targets = Opam_task.(Host.([
+  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "4.00.1";
+                 c_build = ""; }; };
+]))
 
 let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlotd")
 let () = OpamSystem.mkdir work_dir
