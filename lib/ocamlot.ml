@@ -3,8 +3,8 @@ open Sexplib.Std
 module Uri = struct
   include Uri
   let t_of_sexp sexp =
-    of_string (string_of_sexp sexp)
-  let sexp_of_t uri = sexp_of_string (to_string uri)
+    of_string (Sexplib.Sexp.to_string sexp)
+  let sexp_of_t uri = Sexplib.Sexp.of_string (to_string uri)
 end
 
 module Body    = Cohttp_lwt_body
@@ -422,7 +422,7 @@ let worker_listener service_fn ~root t_resource =
   let offer_task ~headers task_resource =
     let (task,_) = Resource.content task_resource in
     let uri = Resource.uri task_resource in
-    let body = string_of_sexp (sexp_of_task_offer (uri,task.job)) in
+    let body = Sexplib.Sexp.to_string (sexp_of_task_offer (uri,task.job)) in
     let open Lwt in
     Server.respond_string ~headers ~status:`OK ~body ()
     >>= Http_server.some_response
@@ -443,7 +443,7 @@ let worker_listener service_fn ~root t_resource =
           with Not_found -> begin
             Body.string_of_body body
             >>= fun body ->
-            let host = Host.t_of_sexp (sexp_of_string body) in
+            let host = Host.t_of_sexp (Sexplib.Sexp.of_string body) in
             let wr = new_worker t_resource host in
             let worker = Resource.content wr in
             let open Cookie.Set_cookie_hdr in

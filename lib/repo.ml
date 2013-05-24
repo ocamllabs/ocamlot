@@ -3,8 +3,8 @@ open Sexplib.Std
 module Uri = struct
   include Uri
   let t_of_sexp sexp =
-    of_string (string_of_sexp sexp)
-  let sexp_of_t uri = sexp_of_string (to_string uri)
+    of_string (Sexplib.Sexp.to_string sexp)
+  let sexp_of_t uri = Sexplib.Sexp.of_string (to_string uri)
 end
 
 type git =

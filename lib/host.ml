@@ -20,6 +20,7 @@ type arch =
   | Armv61
   | Unknown
 with sexp
+
 (*
 type opam =
   | Opam_1_0_0
@@ -30,6 +31,7 @@ type ocaml =
   | OCaml_4_00_1
 with sexp
 *)
+
 type t = {
   os : os;
   arch : arch;

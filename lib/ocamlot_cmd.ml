@@ -249,7 +249,7 @@ let build_testable testable repo_opt branch_opt =
 let work_url url_str =
   let url = Uri.resolve "" (Uri.of_string url_str) (Uri.of_string "?queue") in
   let body = Body.body_of_string (
-    Sexplib.Std.string_of_sexp (
+    Sexplib.Sexp.to_string (
       Host.(sexp_of_t (detect ()))
     )
   ) in Lwt_main.run (
@@ -258,7 +258,8 @@ let work_url url_str =
       | Some (resp, body) ->
           Body.string_of_body body
           >>= fun s ->
-          let sexp = Sexplib.Std.sexp_of_string s in
+          Printf.eprintf "%s\n%!" s;
+          let sexp = Sexplib.Sexp.of_string s in
           let (task_uri, task) = Ocamlot.task_offer_of_sexp sexp in
           (* TODO: cookie jar, refuse or start, check-in, complete *)
           
