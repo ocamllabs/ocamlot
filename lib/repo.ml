@@ -4,7 +4,7 @@ module Uri = struct
   include Uri
   let t_of_sexp sexp =
     of_string (Sexplib.Std.string_of_sexp sexp)
-  let sexp_of_t uri = Sexplib.Sexp.sexp_of_string (to_string uri)
+  let sexp_of_t uri = Sexplib.Std.sexp_of_string (to_string uri)
 end
 
 type git =
