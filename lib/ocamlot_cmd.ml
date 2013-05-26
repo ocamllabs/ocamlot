@@ -263,7 +263,7 @@ let work_url url_str =
           let (task_uri, task) = Ocamlot.task_offer_of_sexp sexp in
           (* TODO: cookie jar, refuse or start, check-in, complete *)
           
-          let result = execute ~jobs:3 "" work_dir task in
+          let result = execute ~jobs:3 "work" work_dir task in
           print_result task result;
           return ()
       | None -> (* TODO: connection closed without response? *)
