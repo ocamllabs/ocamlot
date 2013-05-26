@@ -22,22 +22,11 @@ type worker_message =
   | Refuse of string
   | Accept
   | Check_in
-  | Fail of string
+  | Fail_task of string
   | Complete of Result.t
 with sexp
 
-type worker_action =
-  | Hibernate
-type worker = {
-  engagement : engagement;
-  cookie : string;
-  worker_id : worker_id;
-  worker_host : Host.t;
-  last_request : Time.t;
-}
-type worker_resource = (worker, worker_action) Resource.t
-
-type event =
+type task_event =
   | Advertized of Host.t
   | Refused of worker_id * string
   | Started of worker_id
@@ -47,10 +36,10 @@ type event =
   | Cancelled of string
   | Completed of worker_id * Result.t
 
-type log = (Time.t * event) list
+type task_log = (Time.t * task_event) list
 type job = Opam of Opam_task.t with sexp
 type task = {
-  log : log;
+  log : task_log;
   host : Host.t;
   job : job;
 }
@@ -62,6 +51,20 @@ type task_action =
   | Cancel of string
 type task_resource = (task * requeue, task_action) Resource.t
 and requeue = Requeue of (task_resource -> unit)
+and worker = {
+  engagement : engagement;
+  cookie : string;
+  worker_id : worker_id;
+  worker_host : Host.t;
+  last_request : Time.t;
+  assignment : task_resource option;
+  finished : task_resource list;
+}
+type worker_action =
+  | Assign of task_resource
+  | Finish of task_resource
+  | Quit of task_resource
+type worker_resource = (worker, worker_action) Resource.t
 
 type goal_action =
   | New_task of task_resource
@@ -89,6 +92,7 @@ type t = {
   resources : (Uri.t, (Resource.media_type -> string)) Hashtbl.t;
   goals : (goal, goal_action) Resource.index;
   outstanding : task_resource Lwt_stream.t;
+  task_table : (Uri.t, task_resource) Hashtbl.t;
   workers : (worker, worker_action) Resource.index;
   idle : task_resource Lwt.u Lwt_sequence.t;
 }
@@ -97,6 +101,8 @@ type t_resource = (t, t_action) Resource.t
 let engagement = Time.now ()
 let sessions = Hashtbl.create 10 (* cookie -> worker URI *)
 let title = "ocamlot"
+let worker_id_cookie = "worker_id"
+let worker_timeout = 30.
 
 let mint_id mint () = let id = !mint in incr mint; id
 let worker_mint = ref 0
@@ -139,8 +145,18 @@ let find_task t host =
   List.iter (fun (tr, rq) -> rq tr) rql;
   task_opt
 
-(* TODO: DO *)
-let update_worker worker action = worker
+let update_worker worker action = match action with
+  | Assign tr ->
+      (* TODO: already assigned? *)
+      { worker with assignment=Some tr; }
+  | Finish tr ->
+      (* TODO: not assigned? *)
+      { worker with assignment=None; finished=tr::worker.finished; }
+  | Quit tr ->
+      begin match worker.assignment with
+        | Some t -> { worker with assignment=None; } (* TODO: t != tr -> error *)
+        | None -> worker (* TODO: error! *)
+      end
 let worker_renderer =
   let render_html event =
     let page worker = Printf.sprintf
@@ -167,6 +183,7 @@ let new_worker t_resource worker_host =
   let worker_id = new_worker_id () in
   let worker = {
     engagement; cookie; worker_id; worker_host;
+    assignment = None; finished = [];
     last_request = Time.now ();
   } in
   let worker_resource = Resource.index t.workers
@@ -185,7 +202,7 @@ let update_task (task,rq) action =
         ({ task with log=(now, Started wid)::task.log },rq)
     | Worker (wid, Check_in) ->
         ({ task with log=(now, Checked_in wid)::task.log },rq)
-    | Worker (wid, Fail reason) ->
+    | Worker (wid, Fail_task reason) ->
         ({ task with log=(now, Failed (wid, reason))::task.log },rq)
     | Worker (wid, Complete result) ->
         ({ task with log=(now, Completed (wid, result))::task.log },rq)
@@ -250,7 +267,7 @@ let update_goal goal action = (match action with
   | Update_task (uri, Worker (wid, (Refuse reason))) ->
       let tr = Resource.remove uri goal.tasks in
       goal.enqueue tr
-  | Update_task (uri, Worker (wid, (Fail reason))) ->
+  | Update_task (uri, Worker (wid, (Fail_task reason))) ->
       let tr = Resource.remove uri goal.tasks in
       goal.enqueue tr
   | Update_task (uri, Worker (wid, (Complete result))) ->
@@ -309,7 +326,9 @@ let update_t t action = (match action with
         outstanding = Lwt_stream.choose [t.outstanding; goal.queue];
       })
   | Update_goal (_, New_task tr) ->
-      Resource.(Hashtbl.replace t.resources (uri tr) (represent tr));
+      let open Resource in
+      Hashtbl.replace t.resources (uri tr) (represent tr);
+      Hashtbl.replace t.task_table (uri tr) tr;
       t
   | Update_goal (_, _) -> t (* TODO: aggregate? *)
 )
@@ -332,11 +351,15 @@ let t_renderer =
         (Host.to_string worker.worker_host)
     in
     let page t = Printf.sprintf
-      "<html><head><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p></body></html>"
+      "<html><head><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p><p>Assigned workers: %d</p></body></html>"
       title title
       (String.concat "\n" (List.rev_map goal (Resource.to_list t.goals)))
       (String.concat "\n" (List.rev_map worker (Resource.to_list t.workers)))
       (Lwt_sequence.length t.idle)
+      (List.length (List.filter (fun wr -> match Resource.content wr with
+        | { assignment = Some _ } -> true
+        | _ -> false
+       ) (Resource.to_list t.workers)))
     in Resource.(match event with
       | Create (t, r) -> page t
       | Update (_, r) -> page (content r)
@@ -384,6 +407,7 @@ let make ~base =
     resources;
     goals;
     outstanding = queue;
+    task_table = Hashtbl.create 10;
     workers = Resource.create_index generate_worker_uri [];
     idle = Lwt_sequence.create ();
   } in
@@ -417,53 +441,113 @@ let browser_listener service_fn ~root ~base t_resource =
     ~startup:[]
 
 let worker_listener service_fn ~root t_resource =
-  let routes = Re.(seq [str root; eos]) in
-  let worker_id_cookie = "worker_id" in
-  let offer_task ~headers task_resource =
-    let (task,_) = Resource.content task_resource in
+  let routes = Re.(str root) in
+  let offer_task ~headers worker_resource task_resource =
+    let offer_time = Time.now () in
+    let worker_resource = Resource.update worker_resource
+      (Assign task_resource) in
+    let (task,Requeue rq) = Resource.content task_resource in
     let uri = Resource.uri task_resource in
     let sexp = sexp_of_task_offer (uri,task.job) in
     let body = Sexplib.Sexp.to_string sexp in
     let () = Printf.eprintf "SENDING %s\n%!" body in
+    let stream = Resource.stream task_resource in
+    let _ = Lwt_stream.get_available stream in
     let open Lwt in
+    async (fun () -> (pick [
+      Lwt_unix.sleep worker_timeout
+      >>= begin fun () ->
+        let worker_resource = Resource.update worker_resource
+          (Quit task_resource) in
+        let worker = Resource.content worker_resource in
+        let tr = Resource.update task_resource
+          (Time_out (worker.worker_id,
+                     Time.elapsed offer_time (Time.now ()))) in
+        rq tr; return ()
+      end;
+      Lwt_stream.next stream >>= fun _ -> return ()
+    ]));
     Server.respond_string ~headers ~status:`OK ~body ()
     >>= Http_server.some_response
   in
+  let t = Resource.content t_resource in
   let handler conn_id ?body req = Lwt.(
-    if Uri.query (Request.uri req) <> ["queue",[]]
-      || Request.meth req <> `POST
+    let uri = Request.uri req in
+    if Request.meth req <> `POST
     then return None
-    else let req_headers = Request.headers req in
-         let cookies = Cookie.Cookie_hdr.extract req_headers in
-         let headers = Header.init () in
-         let t = Resource.content t_resource in
-         (try
-            let ident = List.assoc worker_id_cookie cookies in
-            let uri = Hashtbl.find sessions ident in
+    else
+      if Uri.path uri = root && Uri.query uri = ["queue",[]]
+      then
+        let req_headers = Request.headers req in
+        let cookies = Cookie.Cookie_hdr.extract req_headers in
+        let headers = Header.init () in
+        (try
+           let ident = List.assoc worker_id_cookie cookies in
+           let uri = Hashtbl.find sessions ident in
             (* TODO: if post body contains different profile? *)
-            return (headers, Resource.find t.workers uri)
-          with Not_found -> begin
-            Body.string_of_body body
-            >>= fun body ->
-            let () = Printf.eprintf "RECEIVED %s\n%!" body in
-            let host = Host.t_of_sexp (Sexplib.Sexp.of_string body) in
-            let wr = new_worker t_resource host in
+           return (headers, Resource.find t.workers uri)
+         with Not_found -> begin
+           Body.string_of_body body
+           >>= fun body ->
+           let () = Printf.eprintf "RECEIVED %s\n%!" body in
+           let host = Host.t_of_sexp (Sexplib.Sexp.of_string body) in
+           let wr = new_worker t_resource host in
+           let worker = Resource.content wr in
+           let open Cookie.Set_cookie_hdr in
+           let cookie = make (worker_id_cookie,
+                              worker.cookie) in
+           let k, v = Cookie.Set_cookie_hdr.serialize cookie in
+           let headers = Header.add headers k v in
+           return (headers, wr)
+         end
+        ) >>= fun (headers, wr) ->
+        let host = (Resource.content wr).worker_host in
+        match find_task t host with
+          | None ->
+              let t = Resource.content t_resource in
+              add_task_r t.idle
+              >>= offer_task ~headers wr
+          | Some task_resource -> offer_task ~headers wr task_resource
+      else
+        try
+          let tr = Hashtbl.find t.task_table uri in
+          try
+            let req_headers = Request.headers req in
+            let cookies = Cookie.Cookie_hdr.extract req_headers in
+            let ident = List.assoc worker_id_cookie cookies in
+            let worker_uri = Hashtbl.find sessions ident in
+            let wr = Resource.find t.workers worker_uri in
             let worker = Resource.content wr in
-            let open Cookie.Set_cookie_hdr in
-            let cookie = make (worker_id_cookie,
-                               worker.cookie) in
-            let k, v = Cookie.Set_cookie_hdr.serialize cookie in
-            let headers = Header.add headers k v in
-            return (headers, wr)
-          end)
-       >>= fun (headers, wr) ->
-         let host = (Resource.content wr).worker_host in
-         match find_task t host with
-           | None ->
-               let t = Resource.content t_resource in
-               add_task_r t.idle
-               >>= offer_task ~headers
-           | Some task_resource -> offer_task ~headers task_resource
+            let assignment = match worker.assignment with
+              | Some assignment -> assignment | None -> raise Not_found in
+            if (Resource.uri assignment) = uri
+            then begin
+              Body.string_of_body body
+              >>= fun body ->
+              let sexp = Sexplib.Sexp.of_string body in
+              let message = worker_message_of_sexp sexp in
+              let tr = Resource.update tr (Worker (worker.worker_id,message)) in
+              begin match message with
+                | Refuse _ | Fail_task _ ->
+                    let wr = Resource.update wr (Quit tr) in
+                    let (_,Requeue rq) = Resource.content tr in
+                    rq tr
+                | Complete _ ->
+                    let wr = Resource.update wr (Finish tr) in
+                    ()
+                | _ -> ()
+              end;
+              Server.respond ~status:`No_content
+                ~body:None ()
+              >>= Http_server.some_response
+            end
+            else raise Not_found
+          with Not_found ->
+            (* TODO: more accurate error fall-through *)
+            (Server.respond_error ~status:`Forbidden
+               ~body:"403: Forbidden" ()
+             >>= Http_server.some_response)
+        with Not_found -> return None
   ) in
   service_fn
     ~routes
