@@ -133,13 +133,17 @@ let string_of_event = Printf.(function
 
 (* TODO: better search, yes it's linear right now *)
 let find_task t host =
+  Printf.eprintf "looking for task: %d outstanding\n%!"
+    (List.length Lwt_stream.(get_available (clone t.outstanding)));
   let rec pull rql = match Lwt_stream.get_available_up_to 1 t.outstanding with
-    | [] -> (List.rev rql), None
+    | [] ->
+        Printf.eprintf "0 OUTSTANDING TASKS!\n%!";
+        (List.rev rql), None
     | tr::_ ->
         let (task, Requeue rq) = Resource.content tr in
         if task.host = host (* TODO: 1st class pattern match *)
         then (List.rev rql), Some tr
-        else pull ((tr, rq)::rql)
+        else (Printf.eprintf "skipping task\n%!"; pull ((tr, rq)::rql))
   in
   let rql, task_opt = pull [] in
   List.iter (fun (tr, rq) -> rq tr) rql;
@@ -265,20 +269,15 @@ let update_goal goal action = (match action with
   | Update_task (uri, Worker (wid, Accept))
   | Update_task (uri, Worker (wid, Check_in)) -> ()
   | Update_task (uri, Worker (wid, (Refuse reason))) ->
-      let tr = Resource.remove uri goal.tasks in
-      goal.enqueue tr
+      goal.enqueue (Resource.find goal.tasks uri)
   | Update_task (uri, Worker (wid, (Fail_task reason))) ->
-      let tr = Resource.remove uri goal.tasks in
-      goal.enqueue tr
+      goal.enqueue (Resource.find goal.tasks uri)
   | Update_task (uri, Worker (wid, (Complete result))) ->
-      let tr = Resource.remove uri goal.tasks in
-      Resource.archive goal.completed fst tr
+      Resource.archive goal.completed fst (Resource.find goal.tasks uri)
   | Update_task (uri, Time_out (wid, duration)) ->
-      let tr = Resource.remove uri goal.tasks in
-      goal.enqueue tr
+      goal.enqueue (Resource.find goal.tasks uri)
   | Update_task (uri, Cancel reason) ->
-      let tr = Resource.remove uri goal.tasks in
-      Resource.archive goal.completed fst tr
+      Resource.archive goal.completed fst (Resource.find goal.tasks uri)
   | Update_subgoal (uri, subgoal_action) -> ()
 ); goal
 
@@ -443,10 +442,11 @@ let browser_listener service_fn ~root ~base t_resource =
 let worker_listener service_fn ~root t_resource =
   let routes = Re.(str root) in
   let offer_task ~headers worker_resource task_resource =
+    let () = Printf.eprintf "OFFERING A TASK\n%!" in
     let offer_time = Time.now () in
     let worker_resource = Resource.update worker_resource
       (Assign task_resource) in
-    let (task,Requeue rq) = Resource.content task_resource in
+    let (task,_) = Resource.content task_resource in
     let uri = Resource.uri task_resource in
     let sexp = sexp_of_task_offer (uri,task.job) in
     let body = Sexplib.Sexp.to_string sexp in
@@ -463,15 +463,15 @@ let worker_listener service_fn ~root t_resource =
         let tr = Resource.update task_resource
           (Time_out (worker.worker_id,
                      Time.elapsed offer_time (Time.now ()))) in
-        rq tr; return ()
+        return ()
       end;
       Lwt_stream.next stream >>= fun _ -> return ()
     ]));
     Server.respond_string ~headers ~status:`OK ~body ()
     >>= Http_server.some_response
   in
-  let t = Resource.content t_resource in
   let handler conn_id ?body req = Lwt.(
+    let t = Resource.content t_resource in
     let uri = Request.uri req in
     if Request.meth req <> `POST
     then return None
@@ -504,7 +504,6 @@ let worker_listener service_fn ~root t_resource =
         let host = (Resource.content wr).worker_host in
         match find_task t host with
           | None ->
-              let t = Resource.content t_resource in
               add_task_r t.idle
               >>= offer_task ~headers wr
           | Some task_resource -> offer_task ~headers wr task_resource
@@ -530,8 +529,7 @@ let worker_listener service_fn ~root t_resource =
               begin match message with
                 | Refuse _ | Fail_task _ ->
                     let wr = Resource.update wr (Quit tr) in
-                    let (_,Requeue rq) = Resource.content tr in
-                    rq tr
+                    ()
                 | Complete _ ->
                     let wr = Resource.update wr (Finish tr) in
                     ()
