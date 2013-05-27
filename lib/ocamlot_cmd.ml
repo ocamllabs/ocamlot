@@ -4,7 +4,10 @@ open Lwt
 open Result
 
 module Client = Cohttp_lwt_unix.Client
+module Cookie = Cohttp.Cookie
+module Header = Cohttp.Header
 module Body = Cohttp_lwt_body
+module Response = Cohttp_lwt_unix.Response
 module Jar = Github_cookie_jar
 
 exception MissingEnv of string
@@ -247,13 +250,12 @@ let build_testable testable repo_opt branch_opt =
   ) executions
 
 let work_url url_str =
+  let serialize sexp = Body.body_of_string (Sexplib.Sexp.to_string sexp) in
+  let message mesg = serialize (Ocamlot.sexp_of_worker_message mesg) in
   let url = Uri.resolve "" (Uri.of_string url_str) (Uri.of_string "?queue") in
-  let body = Body.body_of_string (
-    Sexplib.Sexp.to_string (
-      Host.(sexp_of_t (detect ()))
-    )
-  ) in Lwt_main.run (
-    Client.post ?body url
+  let body = serialize Host.(sexp_of_t (detect ())) in
+  let rec work headers =
+    Client.post ~headers ?body url
     >>= function
       | Some (resp, body) ->
           Body.string_of_body body
@@ -261,15 +263,36 @@ let work_url url_str =
           Printf.eprintf "%s\n%!" s;
           let sexp = Sexplib.Sexp.of_string s in
           let (task_uri, task) = Ocamlot.task_offer_of_sexp sexp in
-          (* TODO: cookie jar, refuse or start, check-in, complete *)
-          
-          let result = execute ~jobs:3 "work" work_dir task in
-          print_result task result;
-          return ()
+          let resphdrs = Response.headers resp in
+          let cookies = Cookie.Set_cookie_hdr.extract resphdrs in
+          let headers = if List.mem_assoc Ocamlot.worker_id_cookie cookies
+            then Header.of_list [
+              Cookie.Cookie_hdr.serialize
+                (List.map (fun (_,c) -> Cookie.Set_cookie_hdr.binding c) cookies)
+            ]
+            else headers in
+          (* TODO: check-in, complete *)
+          let body = message Ocamlot.Accept in begin
+          Client.post ~headers ?body task_uri
+          >>= function
+            | Some (resp, _) ->
+                let status = Response.status resp in
+                if status = `No_content
+                then begin
+                  let result = execute ~jobs:3 "work" work_dir task in
+                  print_result task result;
+                  work headers end
+                else begin
+                  Printf.eprintf "OCAMLOT worker didn't get Acceptance confirmation: %s; quitting\n" (Cohttp.Code.string_of_status status);
+                  return () end
+            | None -> (* TODO: connection closed without response? *)
+                Printf.eprintf "OCAMLOT worker didn't get Acceptance response\n";
+                return ()
+          end
       | None -> (* TODO: connection closed without response? *)
-          Printf.eprintf "OCAMLOT worker didn't get a response\n";
+          Printf.eprintf "OCAMLOT worker didn't get a response: quitting\n";
           return ()
-  )
+  in Lwt_main.run (work (Header.init ()))
 
 (* CLI *)
 let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")
