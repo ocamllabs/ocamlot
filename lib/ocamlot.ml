@@ -268,15 +268,12 @@ let update_goal goal action = (match action with
   | New_task tr -> goal.enqueue tr
   | Update_task (uri, Worker (wid, Accept))
   | Update_task (uri, Worker (wid, Check_in)) -> ()
-  | Update_task (uri, Worker (wid, (Refuse reason))) ->
+  | Update_task (uri, Time_out (wid, _))
+  | Update_task (uri, Worker (wid, (Refuse _)))
+  | Update_task (uri, Worker (wid, (Fail_task _))) ->
       goal.enqueue (Resource.find goal.tasks uri)
-  | Update_task (uri, Worker (wid, (Fail_task reason))) ->
-      goal.enqueue (Resource.find goal.tasks uri)
-  | Update_task (uri, Worker (wid, (Complete result))) ->
-      Resource.archive goal.completed fst (Resource.find goal.tasks uri)
-  | Update_task (uri, Time_out (wid, duration)) ->
-      goal.enqueue (Resource.find goal.tasks uri)
-  | Update_task (uri, Cancel reason) ->
+  | Update_task (uri, Worker (_, (Complete _)))
+  | Update_task (uri, Cancel _) ->
       Resource.archive goal.completed fst (Resource.find goal.tasks uri)
   | Update_subgoal (uri, subgoal_action) -> ()
 ); goal
@@ -416,7 +413,8 @@ let make ~base =
   ) in
   t_resource
 
-let browser_listener service_fn ~root ~base t_resource =
+let browser_listener service_fn ~base t_resource =
+  let root = Uri.path base in
   let routes = Re.(str root) in
   let t = Resource.content t_resource in
   let html = `text `html in
@@ -439,7 +437,33 @@ let browser_listener service_fn ~root ~base t_resource =
     ~handler
     ~startup:[]
 
-let worker_listener service_fn ~root t_resource =
+let rec monitor_job start_time worker_resource task_resource stream =
+  let open Lwt in
+  async (fun () -> (pick [
+    Lwt_unix.sleep worker_timeout
+    >>= begin fun () ->
+      let worker_resource = Resource.update worker_resource
+        (Quit task_resource) in
+      let worker = Resource.content worker_resource in
+      let tr = Resource.update task_resource
+        (Time_out (worker.worker_id,
+                   Time.elapsed start_time (Time.now ()))) in
+      return ()
+    end;
+    Lwt_stream.next stream >>= function
+      | Resource.Create (_,_)
+      | Resource.Update (Worker (_, Fail_task _), _)
+      | Resource.Update (Worker (_, Refuse _), _)
+      | Resource.Update (Worker (_, Complete _), _)
+      | Resource.Update (Cancel _, _)
+      | Resource.Update (Time_out (_,_), _) -> return ()
+      | Resource.Update (Worker (_, Accept), tr)
+      | Resource.Update (Worker (_, Check_in), tr) -> return
+          (monitor_job (Time.now ()) worker_resource tr stream)
+  ]))
+
+let worker_listener service_fn ~base t_resource =
+  let root = Uri.path base in
   let routes = Re.(str root) in
   let offer_task ~headers worker_resource task_resource =
     let () = Printf.eprintf "OFFERING A TASK\n%!" in
@@ -453,26 +477,14 @@ let worker_listener service_fn ~root t_resource =
     let () = Printf.eprintf "SENDING %s\n%!" body in
     let stream = Resource.stream task_resource in
     let _ = Lwt_stream.get_available stream in
+    monitor_job offer_time worker_resource task_resource stream;
     let open Lwt in
-    async (fun () -> (pick [
-      Lwt_unix.sleep worker_timeout
-      >>= begin fun () ->
-        let worker_resource = Resource.update worker_resource
-          (Quit task_resource) in
-        let worker = Resource.content worker_resource in
-        let tr = Resource.update task_resource
-          (Time_out (worker.worker_id,
-                     Time.elapsed offer_time (Time.now ()))) in
-        return ()
-      end;
-      Lwt_stream.next stream >>= fun _ -> return ()
-    ]));
     Server.respond_string ~headers ~status:`OK ~body ()
     >>= Http_server.some_response
   in
   let handler conn_id ?body req = Lwt.(
     let t = Resource.content t_resource in
-    let uri = Request.uri req in
+    let uri = Uri.resolve "" base (Request.uri req) in
     if Request.meth req <> `POST
     then return None
     else
@@ -507,8 +519,9 @@ let worker_listener service_fn ~root t_resource =
               add_task_r t.idle
               >>= offer_task ~headers wr
           | Some task_resource -> offer_task ~headers wr task_resource
-      else
+      else if Uri.query uri = [] then
         try
+          Printf.eprintf "Looking for %s in task table...\n%!" (Uri.to_string uri);
           let tr = Hashtbl.find t.task_table uri in
           try
             let req_headers = Request.headers req in
@@ -545,7 +558,10 @@ let worker_listener service_fn ~root t_resource =
             (Server.respond_error ~status:`Forbidden
                ~body:"403: Forbidden" ()
              >>= Http_server.some_response)
-        with Not_found -> return None
+        with Not_found ->
+          Printf.eprintf "URI not in task table!\n%!";
+          return None
+      else return None
   ) in
   service_fn
     ~routes

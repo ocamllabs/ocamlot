@@ -11,11 +11,11 @@ let ocamlot = Ocamlot.make ~base
 
 let browser_listener = Ocamlot.browser_listener
   (Http_server.service "Browser Request Listener")
-  ~root:"/" ~base ocamlot
+  ~base ocamlot
 
 let worker_listener = Ocamlot.worker_listener
   (Http_server.service "Worker Task Queue Listener")
-  ~root:"/" ocamlot
+  ~base ocamlot
 
 let gh_listener = Github_listener.make_listener ocamlot
 let gh_event_service = Github_listener.service gh_listener
