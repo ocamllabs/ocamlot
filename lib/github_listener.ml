@@ -48,15 +48,16 @@ let scan endpoint goal_resource = Lwt.(
   Github.(Monad.(run Github_t.(
     let {Github_hook.github; user; repo} = endpoint in
     github >> Pull.for_repo ~user ~repo ())))
-  >>= fun pulls -> List.iter (fun pull ->
+  >>= Lwt_list.iter_p (fun pull ->
     let diff = Opam_repo.diff_of_pull pull in
     let prefix = string_of_int pull.Github_t.pull_number in
-    let packages = Opam_repo.packages_of_diff prefix work_dir diff in
+    Opam_repo.packages_of_diff prefix work_dir diff
+    >>= fun packages ->
     List.iter (fun task ->
       ignore Ocamlot.(queue_job goal_resource (Opam task))
-    ) Opam_task.(tasks_of_packages targets Build diff packages)
-  ) pulls;
-  return ()
+    ) Opam_task.(tasks_of_packages targets Build diff packages);
+    return ()
+  )
 )
 
 let attach listener ~user ~repo =

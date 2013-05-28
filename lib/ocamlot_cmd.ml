@@ -122,9 +122,9 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
     github >> (rev_map (fun num -> Pull.get ~user ~repo ~num ()) pull_ids)
   )))
   >>= fun pulls ->
-  let name = Repo.make_temp_dir ~root_dir:work_dir ~prefix:"mirror" in
-  Repo.(match begin
-    clone_repo ~name
+  let dir = Repo.make_temp_dir ~root_dir:work_dir ~prefix:"mirror" in
+  Repo.(
+    clone_repo ~dir
       ~commit:{repo={ url=Uri.of_string ""; repo_url };
                reference=Ref "master";
                label=sprintf "%s/%s:%s" user repo "master";
@@ -147,11 +147,8 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
     >>= fun dir ->
     let head_url = git_ssh_of_repo mirror_head_repo in
     let refspec = "refs/heads/*:refs/heads/*" in
-    push_refspec ~dir ~url:head_url ~refspec
-  end with
-    | Continue _ -> return ()
-    | Terminate _ -> (* TODO: do *)
-        fail (Failure "something went wrong in mirror's clone+fetch+push")
+    push_refspec ~dir ~url:head_url ~refspec;
+    >>= fun _ -> return ()
   )
   >>= fun () ->
   let {user; repo} = mirror_base_repo in
@@ -199,7 +196,7 @@ let execute ~jobs prefix work_dir = function
       Opam_task.run ~jobs prefix work_dir opam_task
 
 let () = OpamSystem.mkdir work_dir
-let build_testable testable repo_opt branch_opt =
+let build_testable testable repo_opt branch_opt = Lwt_main.run (
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
     let repo_url = Repo.URL Uri.(resolve "file" cwd (of_string rpath)) in
@@ -219,14 +216,15 @@ let build_testable testable repo_opt branch_opt =
   let target = Opam_task.({
     host; compiler={ c_version="4.00.1"; c_build="" };
   }) in
-  let local_tasks = match testable with
+  begin match testable with
     | Pull pull_id ->
         let diff = branch_opt@(diff_of_pull pull_id) in
         let prefix = string_of_int pull_id in
-        let packages = Opam_repo.packages_of_diff prefix work_dir diff in
-        List.map (fun opam_task ->
+        Opam_repo.packages_of_diff prefix work_dir diff
+        >>= fun packages ->
+        return (List.map (fun opam_task ->
           prefix, Ocamlot.Opam opam_task
-        ) Opam_task.(tasks_of_packages [target] Build diff packages)
+        ) Opam_task.(tasks_of_packages [target] Build diff packages))
     | Packages packages ->
         let base = {
           Repo.repo = Repo.({
@@ -238,16 +236,19 @@ let build_testable testable repo_opt branch_opt =
         } in
         let diff = branch_opt@[base] in
         let prefix = String.concat "-" packages in
-        List.map (fun opam_task ->
+        return (List.map (fun opam_task ->
           prefix, Ocamlot.Opam opam_task
-        ) Opam_task.(tasks_of_packages [target] Build diff packages)
-  in
-  let executions = List.rev_map (fun (prefix, task) ->
-    task, execute ~jobs:3 prefix work_dir task
-  ) local_tasks in
-  List.iter (fun (task, result) ->
+        ) Opam_task.(tasks_of_packages [target] Build diff packages))
+  end
+  >>= Lwt_list.map_p (fun (prefix, task) ->
+    execute ~jobs:3 prefix work_dir task
+    >>= fun result -> return (task, result)
+  )
+  >>= fun job_results ->
+  return (List.iter (fun (task, result) ->
     print_result task result
-  ) executions
+  ) job_results)
+)
 
 let work_url url_str =
   let serialize sexp = Body.body_of_string (Sexplib.Sexp.to_string sexp) in
@@ -279,7 +280,8 @@ let work_url url_str =
                 let status = Response.status resp in
                 if status = `No_content
                 then begin
-                  let result = execute ~jobs:3 "work" work_dir task in
+                  execute ~jobs:3 "work" work_dir task
+                  >>= fun result ->
                   print_result task result;
                   work headers end
                 else begin

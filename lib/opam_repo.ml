@@ -1,10 +1,11 @@
 open Sexplib.Std
-
 open Repo
+open Lwt
 
 type pull_part = Base | Head
 exception WTFGitHub of string
 exception GitError of Result.output
+exception NonPackageUpdate of string list
 
 let branch_of_pull part pull = Github_t.(
   let pull_id = pull.pull_number in
@@ -50,7 +51,7 @@ let pkg_sem_re = pkg_change_re pkg_semantic
 let try_infer_packages merge_dir =
   let mod_files = ref [] in
   try
-    OpamFilename.in_dir merge_dir (fun () ->
+    in_dir merge_dir (fun () ->
       mod_files := List.filter (fun filename ->
         not (Re.execp pkg_descr_re filename)
       ) (OpamSystem.read_command_output
@@ -58,35 +59,21 @@ let try_infer_packages merge_dir =
       let packages = OpamPackage.Name.(Set.of_list (List.map (fun filename ->
         of_string Re.(get (exec pkg_sem_re filename) 1)
       ) !mod_files)) in
-      Continue (OpamPackage.Name.Set.elements packages)
+      return (OpamPackage.Name.Set.elements packages)
     )
   with
     | Not_found ->
         let non_package_updates = List.filter (fun filename ->
           not (Re.execp pkg_sem_re filename)
         ) !mod_files in
-        Terminate Result.({
-          err=Printf.sprintf "Pull request modifies non-packages:\n%s\n"
-            (String.concat "\n" non_package_updates);
-          out="";
-          info="";
-        })
-    | OpamSystem.Process_error e -> terminate_of_process_error e
+        fail (NonPackageUpdate non_package_updates)
 
-(* TODO: asynchronous *)
 let packages_of_diff prefix work_dir diff =
   let prefix = prefix^"-merge" in
   let tmp_name = make_temp_dir ~root_dir:work_dir ~prefix in
   let merge_name = Filename.concat tmp_name "opam-repository" in
   Unix.mkdir merge_name 0o700;
-  match begin
-    try_collapse ~name:merge_name diff
-    >>= try_infer_packages
-    >>= fun packages ->
-    Continue (List.rev_map OpamPackage.Name.to_string packages)
-  end with
-    | Continue packages -> packages
-    | Terminate output ->
-        let open Printf in
-        eprintf "ERROR in merging diff stack and inferring build tasks\n%!";
-        raise (GitError output)
+  try_collapse ~dir:merge_name diff
+  >>= try_infer_packages
+  >>= fun packages ->
+  return (List.rev_map OpamPackage.Name.to_string packages)

@@ -1,7 +1,6 @@
 open Sexplib.Std
-
+open Lwt
 module Client = OpamClient.SafeAPI
-open Repo
 
 type compiler = {
   c_version : string;
@@ -21,7 +20,7 @@ type target = {
 type action = Check | Build (* | Test | Benchmark*) with sexp
 
 type t = {
-  diff : diff;
+  diff : Repo.diff;
   packages : string list;
   target : target;
   action : action;
@@ -40,7 +39,7 @@ let to_string { diff; packages; target; action } =
   Printf.sprintf "[%s %s %s with %s]"
     (string_of_action action)
     (String.concat "," packages)
-    (string_of_diff diff)
+    (Repo.string_of_diff diff)
     (string_of_target target)
 
 let initialize_opam ~jobs =
@@ -82,31 +81,17 @@ let try_install tmp pkgs =
           ::(get_opam_env (load_env_state "ocamlot-try-install"))))
   ) in
   let () = Array.iter print_endline env in
-  let r = OpamProcess.run ~name:(Filename.concat tmp "install") ~env
-    "opam" ("install" :: "--yes" :: pkgs) in
-  Continue (pkgs, r)
-(* Maybe once we tame opam's stdout/stderr...
-  try
-    OpamGlobals.yes := true;
-    Client.install (OpamPackage.Name.Set.of_list packages);
-    Continue ()
-  with
-    | OpamGlobals.Exit code -> OpamProcess.( (* TODO: capture errors *)
-      Terminate Result.({
-        err=Printf.sprintf "Exit with OPAM code %d\n" code;
-        out="";
-        info="";
-      })
-    )
-*)
+  Repo.run_command ~env ("opam" :: "install" :: "--yes" :: pkgs)
+  >>= fun r -> return (pkgs, r)
 
 let run ?jobs prefix root_dir {action; diff; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
-  let tmp_name = make_temp_dir ~root_dir ~prefix in
+  let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
   let merge_name = Filename.concat tmp_name "opam-repository" in
   Unix.mkdir merge_name 0o700;
   let set_opam_repo merge_dir =
+    let merge_dir = OpamFilename.Dir.of_string merge_dir in
     (* add merged repository to opam *)
     Client.REPOSITORY.add
       (OpamRepositoryName.of_string merge_name)
@@ -115,45 +100,56 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
     Client.REPOSITORY.remove (OpamRepositoryName.of_string "default");
     Printf.eprintf "OCAMLOT repo merge added\n%!";
   in
-  match begin
-    (* initialize opam if necessary and alias target compiler *)
-    let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
-    (* merge repositories *)
-    try_collapse ~name:merge_name diff
+  (* initialize opam if necessary and alias target compiler *)
+  let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
+  (* merge repositories *)
+  catch (fun () ->
+    Repo.try_collapse ~dir:merge_name diff
     >>= fun merge_dir ->
     set_opam_repo merge_dir;
     Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
-    Continue packages
-    >>= try_install tmp_name
-  end with
-    | Continue (pkgs, result) ->
-        let duration = Time.(elapsed start (now ())) in
+    try_install tmp_name packages
+    >>= fun (pkgs, result) ->
+    let duration = Time.(elapsed start (now ())) in
 
-        let facts = Printf.sprintf "OCAMLOT \"opam install %s\" exited %d in %fs"
-          (String.concat " " pkgs)
-          result.OpamProcess.r_code
-          result.OpamProcess.r_duration in
-        let status = if result.OpamProcess.r_code = 0
-          then begin (* clean up opam-install *)
-            OpamSystem.command [ "rm"; "-rf";
-                                 Filename.concat tmp_name "opam-install" ];
-            Result.Passed
-          end else Result.Failed
-        in
-        Result.({ status; duration;
-                  output={
-                    err=String.concat "\n"
-                      (facts::""::result.OpamProcess.r_stderr);
-                    out=String.concat "\n" result.OpamProcess.r_stdout;
-                    info=result.OpamProcess.r_info};
-                })
-    | Terminate output ->
-        let duration = Time.(elapsed start (now ())) in
-        (* clean up opam-install *)
-        OpamSystem.command [ "rm"; "-rf";
-                             Filename.concat tmp_name "opam-install" ];
-
-        Result.({ status=Failed; duration; output })
+    let facts = Printf.sprintf "OCAMLOT \"opam install %s\" succeeded in %s\n"
+      (String.concat " " pkgs)
+      (Time.duration_to_string duration) in
+    Repo.run_command [ "rm"; "-rf";
+                       Filename.concat tmp_name "opam-install" ]
+    >>= fun _ ->
+    return Result.({ status=Passed;
+                     duration;
+                     output={
+                       err=facts^result.Repo.r_stderr;
+                       out=result.Repo.r_stdout;
+                       info=""};
+                   })
+  ) (fun exn ->
+    let duration = Time.(elapsed start (now ())) in
+    let err,out = Repo.(match exn with
+      | ProcessError (Unix.WEXITED code, r) ->
+          Printf.sprintf "OCAMLOT \"%s %s\" failed (%d) in %s\n"
+            r.r_cmd (String.concat " " r.r_args) code
+            (Time.duration_to_string duration)^r.r_stderr, r.r_stdout
+      | ProcessError (Unix.WSTOPPED signum, r)
+      | ProcessError (Unix.WSIGNALED signum, r) ->
+          Printf.sprintf "OCAMLOT \"%s %s\" terminated by signal %d in %s\n"
+            r.r_cmd (String.concat " " r.r_args) signum
+            (Time.duration_to_string duration)^r.r_stderr, r.r_stdout
+      | exn ->
+          Printf.sprintf "OCAMLOT opam task terminated by \"%s\" in %s\n"
+            (Printexc.to_string exn)
+            (Time.duration_to_string duration), ""
+    ) in
+    (* clean up opam-install *)
+    Repo.run_command [ "rm"; "-rf";
+                       Filename.concat tmp_name "opam-install" ]
+    >>= fun _ ->
+    return Result.({ status=Failed; duration;
+                     output={ err; out; info=""; };
+                   })
+  )
 
 let tasks_of_packages targets action diff packages =
   List.fold_left (fun tasks package ->
