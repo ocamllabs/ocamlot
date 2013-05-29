@@ -76,7 +76,9 @@ let scan endpoint goal_resource = Lwt.(
       | exn ->
           Printf.eprintf "GH repo scan failed because '%s'\n%s\n%!"
             (Printexc.to_string exn)
-            (Printexc.get_backtrace ());
+            (if Printexc.backtrace_status ()
+             then "Backtrace:\n"^(Printexc.get_backtrace ())
+             else "No backtrace available.");
           return ()
     )
   )
