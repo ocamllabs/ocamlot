@@ -3,11 +3,6 @@ open Cmdliner
 open Lwt
 open Result
 
-module Client = Cohttp_lwt_unix.Client
-module Cookie = Cohttp.Cookie
-module Header = Cohttp.Header
-module Body = Cohttp_lwt_body
-module Response = Cohttp_lwt_unix.Response
 module Jar = Github_cookie_jar
 
 exception MissingEnv of string
@@ -180,21 +175,6 @@ let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
     >> Pull.get ~user ~repo ~num:pull_id ()
   )))))
 
-let print_result (Ocamlot.Opam task) = function
-  | { status=Failed; duration; output } ->
-      Printf.eprintf "%s\n%!" output.err;
-      Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
-        (Opam_task.to_string task)
-        (Time.duration_to_string duration)
-  | { status=Passed; duration; output } ->
-      Printf.eprintf "OCAMLOT %s PASSED in %s\n%!"
-        (Opam_task.to_string task)
-        (Time.duration_to_string duration)
-
-let execute ~jobs prefix work_dir = function
-  | Ocamlot.Opam opam_task ->
-      Opam_task.run ~jobs prefix work_dir opam_task
-
 let () = OpamSystem.mkdir work_dir
 let build_testable testable repo_opt branch_opt = Lwt_main.run (
   let repo_of_path rpath name =
@@ -241,60 +221,18 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
         ) Opam_task.(tasks_of_packages [target] Build diff packages))
   end
   >>= Lwt_list.map_p (fun (prefix, task) ->
-    execute ~jobs:3 prefix work_dir task
+    Work.execute ~jobs:3 prefix work_dir task
     >>= fun result -> return (task, result)
   )
   >>= fun job_results ->
   return (List.iter (fun (task, result) ->
-    print_result task result
+    Work.print_result task result
   ) job_results)
 )
 
-let work_url url_str =
-  let serialize sexp = Body.body_of_string (Sexplib.Sexp.to_string sexp) in
-  let message mesg = serialize (Ocamlot.sexp_of_worker_message mesg) in
-  let url = Uri.resolve "" (Uri.of_string url_str) (Uri.of_string "?queue") in
-  let body = serialize Host.(sexp_of_t (detect ())) in
-  let rec work headers =
-    Client.post ~headers ?body url
-    >>= function
-      | Some (resp, body) ->
-          Body.string_of_body body
-          >>= fun s ->
-          Printf.eprintf "%s\n%!" s;
-          let sexp = Sexplib.Sexp.of_string s in
-          let (task_uri, task) = Ocamlot.task_offer_of_sexp sexp in
-          let resphdrs = Response.headers resp in
-          let cookies = Cookie.Set_cookie_hdr.extract resphdrs in
-          let headers = if List.mem_assoc Ocamlot.worker_id_cookie cookies
-            then Header.of_list [
-              Cookie.Cookie_hdr.serialize
-                (List.map (fun (_,c) -> Cookie.Set_cookie_hdr.binding c) cookies)
-            ]
-            else headers in
-          (* TODO: check-in, complete *)
-          let body = message Ocamlot.Accept in begin
-          Client.post ~headers ?body task_uri
-          >>= function
-            | Some (resp, _) ->
-                let status = Response.status resp in
-                if status = `No_content
-                then begin
-                  execute ~jobs:3 "work" work_dir task
-                  >>= fun result ->
-                  print_result task result;
-                  work headers end
-                else begin
-                  Printf.eprintf "OCAMLOT worker didn't get Acceptance confirmation: %s; quitting\n" (Cohttp.Code.string_of_status status);
-                  return () end
-            | None -> (* TODO: connection closed without response? *)
-                Printf.eprintf "OCAMLOT worker didn't get Acceptance response\n";
-                return ()
-          end
-      | None -> (* TODO: connection closed without response? *)
-          Printf.eprintf "OCAMLOT worker didn't get a response: quitting\n";
-          return ()
-  in Lwt_main.run (work (Header.init ()))
+let work_url url_str = Lwt_main.run (
+  Work.forever work_dir (Uri.of_string url_str)
+)
 
 (* CLI *)
 let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")
