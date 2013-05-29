@@ -81,7 +81,7 @@ let try_install tmp pkgs =
           ::(get_opam_env (load_env_state "ocamlot-try-install"))))
   ) in
   let () = Array.iter print_endline env in
-  Repo.run_command ~env ("opam" :: "install" :: "--yes" :: pkgs)
+  Repo.run_command ~env ~cwd:tmp ("opam" :: "install" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
 
 let run ?jobs prefix root_dir {action; diff; packages; target} =
@@ -115,8 +115,7 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
     let facts = Printf.sprintf "OCAMLOT \"opam install %s\" succeeded in %s\n"
       (String.concat " " pkgs)
       (Time.duration_to_string duration) in
-    Repo.run_command [ "rm"; "-rf";
-                       Filename.concat tmp_name "opam-install" ]
+    Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
     >>= fun _ ->
     return Result.({ status=Passed;
                      duration;
@@ -143,8 +142,7 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
             (Time.duration_to_string duration), ""
     ) in
     (* clean up opam-install *)
-    Repo.run_command [ "rm"; "-rf";
-                       Filename.concat tmp_name "opam-install" ]
+    Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
     >>= fun _ ->
     return Result.({ status=Failed; duration;
                      output={ err; out; info=""; };

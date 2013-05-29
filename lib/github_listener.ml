@@ -43,20 +43,42 @@ let notification_handler user repo conn_id ?body req =
   Lwt.(Server.respond_string ~status:`OK ~body ()
        >>= S.some_response)
 
-(* TODO: packages_of_diff task, status checking *)
+(* TODO: packages_of_diff worker task, commit status checking *)
 let scan endpoint goal_resource = Lwt.(
   Github.(Monad.(run Github_t.(
     let {Github_hook.github; user; repo} = endpoint in
     github >> Pull.for_repo ~user ~repo ())))
   >>= Lwt_list.iter_p (fun pull ->
     let diff = Opam_repo.diff_of_pull pull in
-    let prefix = string_of_int pull.Github_t.pull_number in
-    Opam_repo.packages_of_diff prefix work_dir diff
-    >>= fun packages ->
-    List.iter (fun task ->
-      ignore Ocamlot.(queue_job goal_resource (Opam task))
-    ) Opam_task.(tasks_of_packages targets Build diff packages);
-    return ()
+    let pull_number = pull.Github_t.pull_number in
+    let prefix = string_of_int pull_number in
+    catch (fun () ->
+      Opam_repo.packages_of_diff prefix work_dir diff
+      >>= fun packages ->
+      List.iter (Printf.eprintf "PACKAGE %s\n%!") packages;
+      List.iter (fun task ->
+        ignore Ocamlot.(queue_job goal_resource (Opam task))
+      ) Opam_task.(tasks_of_packages targets Build diff packages);
+      return ()
+    ) Repo.(function
+      | ProcessError (Unix.WEXITED code, r) ->
+          Printf.eprintf "stdout: %s\nstderr: %s\n'%s' exited with code %d\n%!"
+            r.r_stdout r.r_stderr
+            (String.concat " " (r.r_cmd::r.r_args))
+            code;
+          return ()
+      | ProcessError (Unix.WSTOPPED signum, r)
+      | ProcessError (Unix.WSIGNALED signum, r) ->
+          Printf.eprintf "'%s' killed with signal %d\n%!"
+            (String.concat " " (r.r_cmd::r.r_args))
+            signum;
+          return ()
+      | exn ->
+          Printf.eprintf "GH repo scan failed because '%s'\n%s\n%!"
+            (Printexc.to_string exn)
+            (Printexc.get_backtrace ());
+          return ()
+    )
   )
 )
 

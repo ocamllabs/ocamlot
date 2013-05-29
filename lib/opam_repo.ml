@@ -51,7 +51,7 @@ let pkg_sem_re = pkg_change_re pkg_semantic
 let try_infer_packages merge_dir =
   let mod_files = ref [] in
   try
-    in_dir merge_dir (fun () ->
+    OpamSystem.in_dir merge_dir (fun () ->
       mod_files := List.filter (fun filename ->
         not (Re.execp pkg_descr_re filename)
       ) (OpamSystem.read_command_output
