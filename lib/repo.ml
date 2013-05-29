@@ -55,25 +55,12 @@ let string_of_git = function
   | SSH (host, path) -> (Uri.to_string host)^":"^(Uri.to_string path)
   | URL url -> Uri.to_string url
 
-let in_dir dir fn =
-  let cwd = Sys.getcwd () in
-  let reset_cwd () = Unix.chdir cwd in
-  Unix.chdir dir;
-  catch
-    (fun () ->
-      let r = fn () in
-      reset_cwd ();
-      r)
-    (fun exn ->
-      reset_cwd ();
-      fail exn)
-
-let run_command ?(env=[||]) cmd_args =
+let run_command ?(env=[||]) ~cwd cmd_args =
   let cmd = List.hd cmd_args in
   let args = List.tl cmd_args in
-  let cmd_args = Array.of_list cmd_args in
   let time = Time.now () in
-  let cwd = Sys.getcwd () in
+  Unix.chdir cwd;
+  let cmd_args = Array.of_list cmd_args in
   let process = Lwt_process.open_process_full ~env ("", cmd_args) in
   process#status
   >>= fun status ->
@@ -94,7 +81,8 @@ let run_command ?(env=[||]) cmd_args =
     | Unix.WEXITED 0 -> return r
     | _ -> fail (ProcessError (status,r))
 
-let run_commands ?(env=[||]) = Lwt_list.map_s (run_command ~env)
+let run_commands ?(env=[||]) ~cwd =
+  Lwt_list.map_s (run_command ~env ~cwd)
 
 let rec update_ref_cmd = function
   | Ref r -> r, []
@@ -104,20 +92,23 @@ let rec update_ref_cmd = function
       a, cmd@[[ "git" ; "update-ref" ; a ; b ]]
 
 let update_refs ~dir refs =
-  in_dir dir (fun () ->
-    run_commands (List.fold_left (fun cmds r ->
-      (snd (update_ref_cmd r))@cmds
-    ) [] refs))
+  run_commands ~cwd:dir (List.fold_left (fun cmds r ->
+    (snd (update_ref_cmd r))@cmds
+  ) [] refs)
   >>= fun _ -> return dir
 
 let clone_repo ~dir ~commit =
   let url = string_of_git commit.repo.repo_url in
   let git_ref, ref_cmd = update_ref_cmd commit.reference in
-  in_dir dir (fun () -> run_commands ([
+  run_commands ~cwd:dir ([
     [ "git" ; "clone" ; url ; "." ];
-  ]@ref_cmd@[
+    [ "git" ; "config" ; "--local" ; "--add" ;
+      "user.name" ; "ocamlot" ];
+    [ "git" ; "config" ; "--local" ; "--add" ;
+      "user.email" ; "infrastructure@lists.ocaml.org" ];
+  ] @ ref_cmd @ [
     [ "git" ; "checkout" ; git_ref ];
-  ]))
+  ])
   >>= fun _ ->
   Printf.eprintf "OCAMLOT repo clone %s\n%!" commit.label;
   return dir
@@ -129,18 +120,18 @@ let make_temp_dir ~root_dir ~prefix =
   tmp_name
 
 let fetch_refspec ~dir ~url ~refspec =
-  in_dir dir (fun () -> run_command [
+  run_command ~cwd:dir [
     "git" ; "fetch" ; string_of_git url ; refspec ;
-  ])
+  ]
   >>= fun _ ->
   Printf.eprintf "OCAMLOT fetch refspec %s into %s\n%!"
     refspec dir;
   return dir
 
 let push_refspec ~dir ~url ~refspec =
-  in_dir dir (fun () -> run_command [
+  run_command ~cwd:dir [
     "git" ; "push" ; string_of_git url ; refspec ;
-  ])
+  ]
   >>= fun _ ->
   Printf.eprintf "OCAMLOT push refspec %s onto %s\n%!"
     refspec (string_of_git url);
@@ -152,10 +143,10 @@ let try_merge ~dir ~base ~head =
   fetch_refspec ~dir ~url:head.repo.repo_url ~refspec
   >>= fun dir ->
   (* TODO: update-ref ? *)
-  in_dir dir (fun () -> run_command [
+  run_command ~cwd:dir [
     "git" ; "merge" ; "--no-edit" ;
     (match head.reference with Ref h | Commit (h,_) | Copy (h,_) -> h);
-  ])
+  ]
   >>= fun _ ->
   Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
     head.label base.label;
@@ -166,7 +157,8 @@ let try_collapse ~dir = function
   | bl -> begin
     let diffl = List.rev bl in
     let base = List.hd diffl in
-    let rec merge diffl dir = match diffl with
+    let rec merge diffl dir =
+      match diffl with
       | [] -> return dir
       | head::bs -> try_merge ~dir ~base ~head >>= (merge bs)
     in
