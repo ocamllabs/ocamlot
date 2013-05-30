@@ -21,11 +21,3 @@ Executable ocamlot
   CompiledObject: best
   Install: false
   BuildDepends: ocamlot, github.unix, sexplib, sexplib.syntax
-
-Executable ocamlot_server
-  Path: lib
-  MainIs: ocamlot_server.ml
-  Custom: true
-  CompiledObject: best
-  Install: false
-  BuildDepends: ocamlot, github.unix, sexplib, sexplib.syntax
