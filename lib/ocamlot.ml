@@ -83,11 +83,6 @@ type worker_action =
   | Quit of task_resource
 type worker_resource = (worker, worker_action) Resource.t
 
-type goal_action =
-  | New_task of task_resource
-  | Update_task of Uri.t * task_action
-  | Update_subgoal of Uri.t * goal_action
-
 type goal = {
   slug : string;
   title : string;
@@ -98,6 +93,11 @@ type goal = {
   queue : task_resource Lwt_stream.t;
   enqueue : task_resource -> unit;
 }
+and goal_action =
+  | New_task of task_resource
+  | Update_task of Uri.t * task_action
+  | New_subgoal of goal_resource
+  | Update_subgoal of Uri.t * goal_action
 and goal_resource = (goal, goal_action) Resource.t
 
 type t_action =
@@ -124,6 +124,8 @@ let worker_timeout = 30.
 let mint_id mint () = let id = !mint in incr mint; id
 let worker_mint = ref 0
 let new_worker_id = mint_id worker_mint
+
+let style = "//netdna.bootstrapcdn.com/bootswatch/2.3.1/flatly/bootstrap.min.css"
 
 let string_of_job = function
   | Opam opam_task -> "opam => "^(Opam_task.to_string opam_task)
@@ -181,7 +183,8 @@ let update_worker worker action = match action with
 let worker_renderer =
   let render_html event =
     let page worker = Printf.sprintf
-      "<html><head><title>Knight %d : %s</title></head><body><h1>Knight %d</h1><p>Last request: %s</p><p>%s</p></body></html>"
+      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>Knight %d : %s</title></head><body><h1>Knight %d</h1><p>Last request: %s</p><p>%s</p></body></html>"
+      style
       worker.worker_id title worker.worker_id
       (Time.to_string worker.last_request)
       (Host.to_string worker.worker_host)
@@ -231,7 +234,7 @@ let update_task (task,rq) action =
         ({ task with log=(now, Timed_out (wid, duration))::task.log },rq)
     | Cancel reason ->
         ({ task with log=(now, Cancelled reason)::task.log },rq)
-let task_renderer =
+let task_renderer goal_resource =
   let render_html event =
     let log_event (time, event) =
       Printf.sprintf "<li>%s at %s</li>"
@@ -241,7 +244,8 @@ let task_renderer =
       let job_descr = string_of_job job in
       let (time, event) = List.hd log in
       Printf.sprintf
-        "<html><head><title>%s : %s</title></head><body><h1>%s</h1><div id='update'>%s</div><div id='status'>%s</div>%s<ul>%s</ul></body></html>"
+        "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><div id='update'>%s</div><div id='status'>%s</div>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
+        style
         job_descr title job_descr
         (Time.to_string time)
         (string_of_event event)
@@ -251,6 +255,8 @@ let task_renderer =
                 Result.(to_html result)
           | _ -> "")
         (String.concat "\n" (List.map log_event log))
+        (Uri.to_string (Resource.uri goal_resource))
+        (Resource.content goal_resource).title
     in Resource.(match event with
       | Create ((task, _), r) -> page task
       | Update (_, r) -> page (fst (content r))
@@ -276,75 +282,37 @@ let queue_job goal_resource job =
     job;
   } in
   let task_resource = Resource.index goal.tasks
-    (task, Requeue goal.enqueue) update_task task_renderer
+    (task, Requeue goal.enqueue) update_task (task_renderer goal_resource)
   in
   Resource.bubble task_resource goal_resource lift_task_to_goal;
   task_resource
 
-let update_goal goal action = (match action with
-  | New_task tr -> goal.enqueue tr
-  | Update_task (uri, Worker (wid, Accept))
-  | Update_task (uri, Worker (wid, Check_in)) -> ()
-  | Update_task (uri, Time_out (wid, _))
-  | Update_task (uri, Worker (wid, (Refuse _)))
-  | Update_task (uri, Worker (wid, (Fail_task _))) ->
-      goal.enqueue (Resource.find goal.tasks uri)
-  | Update_task (uri, Worker (_, (Complete _)))
-  | Update_task (uri, Cancel _) ->
-      Resource.archive goal.completed fst (Resource.find goal.tasks uri)
-  | Update_subgoal (uri, subgoal_action) -> ()
-); goal
-
-let goal_renderer =
-  let render_html event =
-    let task tr =
-      let task = fst (Resource.content tr) in
-      let tm, status = List.hd task.log in
-      Printf.sprintf "<li><a href='%s'>%s (%s) : %s</a></li>"
-        (Uri.to_string (Resource.uri tr))
-        (string_of_event status) (Time.to_string tm) (string_of_job task.job)
-    in
-    let page goal = Printf.sprintf
-      "<html><head><title>%s : %s</title></head><body><h1>%s</h1><p>%s</p><ul>%s</ul></body></html>"
-      goal.title title goal.title goal.descr
-      (String.concat "\n" (List.rev_map task (Resource.to_list goal.tasks)))
-    in Resource.(match event with
-      | Create (goal, r) -> page goal
-      | Update (goal_action, r) -> page (content r)
-    ) in
-  let r = Hashtbl.create 1 in
-  Hashtbl.replace r (`text `html) render_html;
-  r
-
-let lift_goal_to_t = Resource.(function
-  | Create (_, r) -> New_goal r
-  | Update (d, r) -> Update_goal (uri r, d)
-)
-
-let new_goal t_resource goal =
-  let t = Resource.content t_resource in
-  let goal_resource = Resource.index t.goals goal update_goal goal_renderer in
-  Resource.bubble goal_resource t_resource lift_goal_to_t;
-  goal_resource
-
-let update_t t action = (match action with
-  | New_worker wr ->
-      Resource.(Hashtbl.replace t.resources (uri wr) (represent wr));
-      t
-  | Update_worker (_,_) -> t (* TODO: retire *)
-  | New_goal gr -> Resource.(
-      let goal = content gr in
-      Hashtbl.replace t.resources (uri gr) (represent gr);
-      { t with
-        outstanding = Lwt_stream.choose [t.outstanding; goal.queue];
-      })
-  | Update_goal (_, New_task tr) ->
+let rec update_t_goal t goal = function
+  | New_task tr ->
       let open Resource in
       Hashtbl.replace t.resources (uri tr) (represent tr);
       Hashtbl.replace t.task_table (uri tr) tr;
       t
-  | Update_goal (_, _) -> t (* TODO: aggregate? *)
-)
+  | New_subgoal gr ->
+      let open Resource in
+      Hashtbl.replace t.resources (uri gr) (represent gr);
+      { t with
+        outstanding = Lwt_stream.choose [t.outstanding; goal.queue];
+      }
+  | Update_task (_,_) -> t
+  | Update_subgoal (_,subgoal_event) -> update_t_goal t goal subgoal_event
+
+let update_t t = function
+  | New_worker wr ->
+      Resource.(Hashtbl.replace t.resources (uri wr) (represent wr));
+      t
+  | Update_worker (_,_) -> t (* TODO: idle/assigned counter *)
+  | New_goal gr ->
+      let open Resource in
+      let goal = content gr in
+      update_t_goal t goal (New_subgoal gr)
+  | Update_goal (goal_uri, goal_event) ->
+      update_t_goal t Resource.(content (find t.goals goal_uri)) goal_event
 
 let t_renderer =
   let render_html event =
@@ -364,7 +332,8 @@ let t_renderer =
         (Host.to_string worker.worker_host)
     in
     let page t = Printf.sprintf
-      "<html><head><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p><p>Assigned workers: %d</p></body></html>"
+      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p><p>Assigned workers: %d</p></body></html>"
+      style
       title title
       (String.concat "\n" (List.rev_map goal (Resource.to_list t.goals)))
       (String.concat "\n" (List.rev_map worker (Resource.to_list t.workers)))
@@ -380,30 +349,6 @@ let t_renderer =
   let r = Hashtbl.create 1 in
   Hashtbl.replace r (`text `html) render_html;
   r
-
-let make_integration_goal t_resource ~title ~descr ~slug =
-  let base = Resource.uri t_resource in
-  let queue, enqueue = Lwt_stream.create () in
-  let generate_subgoal_uri subgoal =
-    Uri.(resolve "" base (of_string (slug^"/"^subgoal.slug)))
-  in
-  let task_mint = ref 0 in
-  let new_task_id = mint_id task_mint in
-  let generate_task_uri task =
-    Uri.(resolve "" base
-           (of_string (Printf.sprintf "%s/task/%d" slug (new_task_id ()))))
-  in
-  let integration = {
-    slug;
-    title;
-    descr;
-    subgoals=Resource.create_index generate_subgoal_uri [];
-    completed=Resource.create_archive [];
-    tasks=Resource.create_index generate_task_uri [];
-    queue;
-    enqueue=(fun task_resource -> enqueue (Some task_resource));
-  } in
-  new_goal t_resource integration
 
 let make ~base =
   let queue, _ = Lwt_stream.create () in
@@ -441,8 +386,8 @@ let browser_listener service_fn ~base t_resource =
   ) in
   let handler conn_id ?body req = Lwt.(
     let req_uri = Uri.resolve "http" base (Request.uri req) in
-    Printf.eprintf "BROWSER: %s\n%!" (Uri.to_string req_uri);
-    Hashtbl.iter (fun uri _ -> Printf.eprintf "       : %s\n%!" (Uri.to_string uri)) t.resources;
+    (*Printf.eprintf "BROWSER: %s\n%!" (Uri.to_string req_uri);
+    Hashtbl.iter (fun uri _ -> Printf.eprintf "       : %s\n%!" (Uri.to_string uri)) t.resources;*)
     try
       let represent = Hashtbl.find t.resources req_uri in
       respond (represent html)

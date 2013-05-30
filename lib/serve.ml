@@ -56,7 +56,7 @@ let forever base port =
                               eprintf "GITHUB TOKEN MISSING: %s\nQuitting\n%!" name;
                               exit 1
                           | exn ->
-                              eprintf "GH Repo Attachment Error: %s\mQuitting\n%!"
+                              eprintf "GH Repo Attachment Error: %s\nQuitting\n%!"
                                 (Printexc.to_string exn);
                               exit 1
                         )

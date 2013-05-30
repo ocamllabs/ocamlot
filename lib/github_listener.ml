@@ -63,7 +63,7 @@ let notification_handler user repo conn_id ?body req =
   >>= S.some_response
 
 (* TODO: packages_of_diff worker task, commit status checking *)
-let scan endpoint goal_resource =
+let scan endpoint gh_repo_resource =
   Github.(Monad.(run Github_t.(
     let {Github_hook.github; user; repo} = endpoint in
     github >> Pull.for_repo ~user ~repo ())))
@@ -71,12 +71,19 @@ let scan endpoint goal_resource =
     let diff = Opam_repo.diff_of_pull pull in
     let pull_number = pull.Github_t.pull_number in
     let prefix = string_of_int pull_number in
+    let gh_repo_goal = Resource.content gh_repo_resource in
+    let pull_goal = Goal.make_pull gh_repo_resource
+      ~title:(sprintf "%s Pull Request %d" gh_repo_goal.Ocamlot.title pull_number)
+      ~descr:(sprintf "Check %s <a href='%s'>pull request %d</a>."
+                gh_repo_goal.Ocamlot.slug pull.Github_t.pull_html_url pull_number)
+      ~slug:("pull/"^prefix)
+    in
     catch (fun () ->
       Opam_repo.packages_of_diff prefix work_dir diff
       >>= fun packages ->
       List.iter (Printf.eprintf "PACKAGE %s\n%!") packages;
       List.iter (fun task ->
-        ignore Ocamlot.(queue_job goal_resource (Opam task))
+        ignore Ocamlot.(queue_job pull_goal (Opam task))
       ) Opam_task.(tasks_of_packages targets Build diff packages);
       return ()
     ) Repo.(function
@@ -104,12 +111,12 @@ let scan endpoint goal_resource =
 
 let attach listener ~user ~repo =
   let name = user^"/"^repo in
-  let goal_resource = Ocamlot.make_integration_goal listener.t
+  let gh_repo_resource = Goal.make_integration listener.t
     ~title:(sprintf "Test Package Repository %s" name)
     ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
     ~slug:("github/"^name)
   in
-  let uri = Resource.uri goal_resource in
+  let uri = Resource.uri gh_repo_resource in
   Jar.get listener.jar ~name
   >>= function
     | None -> fail (TokenMissing (listener.jar, name))
@@ -143,7 +150,7 @@ let attach listener ~user ~repo =
                 (github_error_str ~user ~repo);
               return ()
           | {status=Connected} ->
-              scan endpoint goal_resource
+              scan endpoint gh_repo_resource
         )
 
 let make_listener t =
