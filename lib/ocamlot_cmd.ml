@@ -249,8 +249,8 @@ let serve () =
     | None, Some port -> port
     | None, None -> (prerr_endline "No server port specified; quitting."; exit 1)
   in
-  prerr_endline "Starting ocamlot daemon...\n";
-  Serve.daemon url port
+  prerr_endline "Starting ocamlot server...\n";
+  Serve.forever url port
 
 (* CLI *)
 let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")

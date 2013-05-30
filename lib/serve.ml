@@ -6,7 +6,7 @@ let watch_list = [
   "ocamlot-dev", "opam-repository";
 ]
 
-let daemon base port =
+let forever base port =
   let host = match Uri.host base with None -> "" | Some host -> host in
   let ocamlot = Ocamlot.make ~base in
 
@@ -50,11 +50,14 @@ let daemon base port =
               gh_event_server worker_listener)
   in
 
+  (* TODO: This causes Github Cookie Jar reads to fail after attempting to
+           deserialize an empty string rather than the cookie file contents.
+
   let directory = Unix.getcwd () in
   eprintf "Daemonizing in %s\n%!" directory;
   Lwt_daemon.daemonize
     ~stdout:`Keep ~stderr:`Keep ~directory
-    ();
+    ();*)
   Lwt_unix.run begin
     ocamlot_server_later
     >>= fun ocamlot_server ->
