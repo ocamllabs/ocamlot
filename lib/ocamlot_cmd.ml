@@ -234,6 +234,22 @@ let work_url url_str = Lwt_main.run (
   Work.forever work_dir (Uri.of_string url_str)
 )
 
+let serve () =
+  (* TODO: BEGIN should be adjustable from command line *)
+  let open Config in
+  let url_str = Uri.to_string
+    (Uri.make ~scheme:"https" ~host ~port:outside_port ~path:"/" ()) in
+  let port_opt = Some port in
+  (* END *)
+  let url = Uri.of_string url_str in
+  let port = match port_opt, Uri.port url with
+    | Some port, _ -> port
+    | None, Some port -> port
+    | None, None -> (prerr_endline "No server port specified; quitting."; exit 1)
+  in
+  prerr_endline "Starting ocamlot daemon...\n";
+  Serve.daemon url port
+
 (* CLI *)
 let pull_id = Arg.(required & pos 0 (some int) None & info [] ~docv:"PULL_ID" ~doc:"Pull identifier.")
 
@@ -278,6 +294,10 @@ let work_cmd =
   Term.(pure work_url $ url),
   Term.info "work" ~doc:"queue for work"
 
+let serve_cmd =
+  Term.(pure serve $ pure ()),
+  Term.info "serve" ~doc:"start an ocamlot server daemon"
+
 let default_cmd =
   let doc = "conduct integration tests for opam-repository" in
   Term.(ret (pure (`Help (`Pager, None)))),
@@ -293,6 +313,7 @@ let default_cmd =
 let cmds = [
   list_cmd; show_cmd; open_cmd;
   build_cmd; mirror_cmd; work_cmd;
+  serve_cmd;
 ]
 
 let () =

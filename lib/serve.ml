@@ -4,6 +4,7 @@ let watch_list = [
 ]
 
 let daemon base port =
+  let host = match Uri.host base with None -> "" | Some host -> host in
   let ocamlot = Ocamlot.make ~base in
 
   let browser_listener = Ocamlot.browser_listener
