@@ -40,7 +40,9 @@ let url_of_repo {user; repo} = Uri.of_string
 
 let load_auth ?(scopes=[]) {user;repo} =
   let name = user^"/"^repo in
-  Jar.get ~name
+  Jar.init ()
+  >>= fun jar ->
+  Jar.get jar ~name
   >>= function
     | None ->
         Printf.eprintf "No Github Cookie Jar cookie '%s'\n" name;
