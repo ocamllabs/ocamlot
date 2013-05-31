@@ -102,6 +102,12 @@ let arch_of_string_opt = function
 let to_string { os; arch } =
   Printf.sprintf "%s (%s)" (string_of_os os) (string_of_arch arch)
 
+let ltws = Re.(compile (seq [
+  bos ; rep space ; group (non_greedy (rep any)) ; rep space ; eos
+]))
+let strip s = Re.(get (exec ltws s) 1)
+
+
 (* copied from OpamMisc :-/ *)
 let with_process_in cmd f =
   let ic = Unix.open_process_in cmd in
@@ -113,12 +119,12 @@ let with_process_in cmd f =
 
 let uname_m () =
   try with_process_in "uname -m"
-        (fun ic -> Some (OpamMisc.strip (input_line ic)))
+        (fun ic -> Some (strip (input_line ic)))
   with _ -> None
 
 let uname_s () =
   try with_process_in "uname -s"
-        (fun ic -> Some (OpamMisc.strip (input_line ic)))
+        (fun ic -> Some (strip (input_line ic)))
   with _ -> None
 
 let archref = ref None
