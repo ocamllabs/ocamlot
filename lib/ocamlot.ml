@@ -92,6 +92,7 @@ type goal = {
   tasks : (task * requeue, task_action) Resource.index;
   queue : task_resource Lwt_stream.t;
   enqueue : task_resource -> unit;
+  stream : task_resource Lwt_stream.t;
 }
 and goal_action =
   | New_task of task_resource
@@ -287,7 +288,7 @@ let queue_job goal_resource job =
   Resource.bubble task_resource goal_resource lift_task_to_goal;
   task_resource
 
-let rec update_t_goal t goal = function
+let rec update_t_goal t = function
   | New_task tr ->
       let open Resource in
       Hashtbl.replace t.resources (uri tr) (represent tr);
@@ -297,22 +298,21 @@ let rec update_t_goal t goal = function
       let open Resource in
       Hashtbl.replace t.resources (uri gr) (represent gr);
       { t with
-        outstanding = Lwt_stream.choose [t.outstanding; goal.queue];
+        outstanding = Lwt_stream.choose
+          (List.map
+             (fun g -> (Resource.content g).stream)
+             (Resource.to_list t.goals));
       }
   | Update_task (_,_) -> t
-  | Update_subgoal (_,subgoal_event) -> update_t_goal t goal subgoal_event
+  | Update_subgoal (_,subgoal_event) -> update_t_goal t subgoal_event
 
 let update_t t = function
   | New_worker wr ->
       Resource.(Hashtbl.replace t.resources (uri wr) (represent wr));
       t
   | Update_worker (_,_) -> t (* TODO: idle/assigned counter *)
-  | New_goal gr ->
-      let open Resource in
-      let goal = content gr in
-      update_t_goal t goal (New_subgoal gr)
-  | Update_goal (goal_uri, goal_event) ->
-      update_t_goal t Resource.(content (find t.goals goal_uri)) goal_event
+  | New_goal gr -> update_t_goal t (New_subgoal gr)
+  | Update_goal (_, goal_event) -> update_t_goal t goal_event
 
 let t_renderer =
   let render_html event =

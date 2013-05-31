@@ -1,12 +1,14 @@
 open Ocamlot
 
-let rec update_goal_subgoal goal subgoal = function
+let rec update_goal_subgoal goal = function
   | New_task _
   | Update_task (_,_) -> goal
   | New_subgoal _ ->
-      { goal with queue=Lwt_stream.choose [goal.queue; subgoal.queue] }
+      { goal with stream=Lwt_stream.choose
+          (goal.queue::(List.map (fun g -> (Resource.content g).stream)
+                          (Resource.to_list goal.subgoals))) }
   | Update_subgoal (_,subgoal_event) ->
-      update_goal_subgoal goal subgoal subgoal_event
+      update_goal_subgoal goal subgoal_event
 
 let update_goal goal = function
   | New_task tr -> goal.enqueue tr; goal
@@ -21,12 +23,8 @@ let update_goal goal = function
   | Update_task (uri, Cancel _) ->
       Resource.archive goal.completed fst (Resource.find goal.tasks uri);
       goal
-  | New_subgoal gr ->
-      let subgoal = Resource.content gr in
-      update_goal_subgoal goal subgoal (New_subgoal gr)
-  | Update_subgoal (subgoal_uri, subgoal_event) ->
-      update_goal_subgoal goal
-        Resource.(content (find goal.subgoals subgoal_uri)) subgoal_event
+  | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
+  | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
 let goal_renderer parent_title parent_uri =
   let render_html event =
@@ -111,6 +109,7 @@ let make_integration t_resource ~title ~descr ~slug =
     tasks=Resource.create_index (generate_task_uri base new_task_id) [];
     queue;
     enqueue=(fun task_resource -> enqueue (Some task_resource));
+    stream=queue;
   } in
   new_goal t_resource integration
 
@@ -128,5 +127,6 @@ let make_pull integration_gr ~title ~descr ~slug =
     tasks=Resource.create_index (generate_task_uri base new_task_id) [];
     queue;
     enqueue=(fun task_resource -> enqueue (Some task_resource));
+    stream=queue;
   } in
   new_subgoal integration_gr pull_goal
