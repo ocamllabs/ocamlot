@@ -107,7 +107,6 @@ let ltws = Re.(compile (seq [
 ]))
 let strip s = Re.(get (exec ltws s) 1)
 
-
 (* copied from OpamMisc :-/ *)
 let with_process_in cmd f =
   let ic = Unix.open_process_in cmd in
