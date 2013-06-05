@@ -72,6 +72,8 @@ let string_of_git = function
   | SSH (host, path) -> (Uri.to_string host)^":"^(Uri.to_string path)
   | URL url -> Uri.to_string url
 
+let string_of_reference = function Ref h | Commit (h,_) | Copy (h,_) -> h
+
 let run_command ?(env=[||]) ~cwd cmd_args =
   let cmd = List.hd cmd_args in
   let args = List.tl cmd_args in
@@ -155,14 +157,13 @@ let push_refspec ~dir ~url ~refspec =
   return dir
 
 let try_merge ~dir ~base ~head =
-  let refspec = match head.reference with
-    | Ref h | Commit (h,_) | Copy (h,_) -> h^":"^h in
+  let ref_str = string_of_reference head.reference in
+  let refspec = ref_str ^ ":" ^ ref_str in
   fetch_refspec ~dir ~url:head.repo.repo_url ~refspec
   >>= fun dir ->
   (* TODO: update-ref ? *)
   run_command ~cwd:dir [
-    "git" ; "merge" ; "--no-edit" ;
-    (match head.reference with Ref h | Commit (h,_) | Copy (h,_) -> h);
+    "git" ; "merge" ; "--no-edit" ; string_of_reference head.reference;
   ]
   >>= fun _ ->
   Printf.eprintf "OCAMLOT repo merge %s onto %s\n%!"
