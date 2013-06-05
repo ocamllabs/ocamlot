@@ -26,9 +26,11 @@ exception WTFGitHub of string
 exception GitError of Result.output
 exception NonPackageUpdate of string list
 
+let ref_base_of_string = Printf.sprintf "refs/pull/%s/"
+
 let branch_of_pull part pull = Github_t.(
   let pull_id = pull.pull_number in
-  let ref_base = "refs/pull/"^(string_of_int pull_id)^"/" in
+  let ref_base = ref_base_of_string (string_of_int pull_id) in
   let base = match pull.pull_base.branch_repo with
     | None -> raise (WTFGitHub
                        (Printf.sprintf "pull %d lacks a base repo" pull_id))
@@ -91,9 +93,12 @@ let try_infer_packages base_ref_str head_ref_str merge_dir =
 let packages_of_diff prefix work_dir diff =
   let prefix = prefix^"-merge" in
   let tmp_name = make_temp_dir ~root_dir:work_dir ~prefix in
-  let merge_name = Filename.concat tmp_name "opam-repository" in
+  let dir = Filename.concat tmp_name "opam-repository" in
+  Unix.mkdir dir 0o700;
+  try_collapse ~dir diff
+  >>= fun dir ->
   let head = (List.hd diff).reference in
-  let base = (List.hd (List.rev diff)).reference in
-  Unix.mkdir merge_name 0o700;
-  try_collapse ~dir:merge_name diff
+  base_reference_of_diff ~dir (ref_base_of_string prefix) diff
+  >>= fun base ->
+  update_refs ~dir [base]
   >>= try_infer_packages (string_of_reference head) (string_of_reference base)

@@ -116,6 +116,13 @@ let update_refs ~dir refs =
   ) [] refs)
   >>= fun _ -> return dir
 
+let base_reference_of_diff ~dir ref_prefix diff =
+  run_command ~cwd:dir ([
+    "git" ; "show-branch" ; "--merge-base" ;
+  ] @ (List.map (fun branch -> string_of_reference branch.reference) diff))
+  >>= fun { r_stdout } ->
+  return (Commit (ref_prefix^"merge-base", Util.strip r_stdout))
+
 let clone_repo ~dir ~commit =
   let url = string_of_git commit.repo.repo_url in
   let git_ref, ref_cmd = update_ref_cmd commit.reference in
