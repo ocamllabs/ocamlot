@@ -51,7 +51,7 @@ let targets = Opam_task.(Host.([
 ]))
 
 let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlotd")
-let () = OpamSystem.mkdir work_dir
+let () = Util.mkdir_p work_dir 0o700
 
 let github_error_str ~user ~repo =
   sprintf "GitHub connection for %s/%s failed:" user repo
@@ -100,7 +100,8 @@ let scan endpoint gh_repo_resource =
             signum;
           return ()
       | exn ->
-          Printf.eprintf "GH repo scan failed because '%s'\n%s\n%!"
+          Printf.eprintf "git package diff of '%s' failed because '%s'\n%s\n%!"
+            (Uri.to_string (Resource.uri pull_goal))
             (Printexc.to_string exn)
             (if Printexc.backtrace_status ()
              then "Backtrace:\n"^(Printexc.get_backtrace ())

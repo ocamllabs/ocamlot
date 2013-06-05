@@ -19,6 +19,8 @@ open Sexplib.Std
 open Repo
 open Lwt
 
+module StrSet = Set.Make(String)
+
 type pull_part = Base | Head
 exception WTFGitHub of string
 exception GitError of Result.output
@@ -32,7 +34,7 @@ let branch_of_pull part pull = Github_t.(
                        (Printf.sprintf "pull %d lacks a base repo" pull_id))
     | Some repo -> repo
   in
-  let repo_url = Repo.URL (Uri.of_string base.repo_clone_url) in
+  let repo_url = URL (Uri.of_string base.repo_clone_url) in
   match part with
     | Head -> let gitref = ref_base^"head" in Repo.({
       repo={ url=Uri.of_string ""; repo_url };
@@ -65,32 +67,33 @@ let pkg_semantic = Re.(alt [
 let pkg_sem_re = pkg_change_re pkg_semantic
 
 (* TODO: log inference *)
-let try_infer_packages merge_dir =
+let try_infer_packages base_ref_str head_ref_str merge_dir =
   let mod_files = ref [] in
-  try
-    OpamSystem.in_dir merge_dir (fun () ->
-      mod_files := List.filter (fun filename ->
-        not (Re.execp pkg_descr_re filename)
-      ) (OpamSystem.read_command_output
-           [ "git" ; "diff" ; "--name-only" ; "HEAD~1" ; "HEAD" ]);
-      let packages = OpamPackage.Name.(Set.of_list (List.map (fun filename ->
-        of_string Re.(get (exec pkg_sem_re filename) 1)
-      ) !mod_files)) in
-      return (OpamPackage.Name.Set.elements packages)
-    )
-  with
+  try begin
+    run_command ~cwd:merge_dir
+      [ "git" ; "diff" ; "--name-only" ; base_ref_str ; head_ref_str ]
+    >>= fun { r_stdout } ->
+    mod_files := List.filter (fun filename ->
+      not (Re.execp pkg_descr_re filename)
+    ) Re_str.(split (regexp_string "\n") r_stdout);
+    let packages = List.fold_left (fun set filename ->
+      StrSet.add Re.(get (exec pkg_sem_re filename) 1) set
+    ) StrSet.empty !mod_files in
+    return (StrSet.elements packages)
+  end with
     | Not_found ->
         let non_package_updates = List.filter (fun filename ->
           not (Re.execp pkg_sem_re filename)
         ) !mod_files in
         fail (NonPackageUpdate non_package_updates)
 
+(* TODO: clean-up fs *)
 let packages_of_diff prefix work_dir diff =
   let prefix = prefix^"-merge" in
   let tmp_name = make_temp_dir ~root_dir:work_dir ~prefix in
   let merge_name = Filename.concat tmp_name "opam-repository" in
+  let head = (List.hd diff).reference in
+  let base = (List.hd (List.rev diff)).reference in
   Unix.mkdir merge_name 0o700;
   try_collapse ~dir:merge_name diff
-  >>= try_infer_packages
-  >>= fun packages ->
-  return (List.rev_map OpamPackage.Name.to_string packages)
+  >>= try_infer_packages (string_of_reference head) (string_of_reference base)

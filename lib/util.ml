@@ -47,3 +47,7 @@ let rec make_fresh_dir ?k ?root_dir prefix =
     name
   with Unix.Unix_error (Unix.EEXIST, "mkdir", _) ->
     make_fresh_dir ~k:(k+1) ~root_dir prefix
+
+let mkdir_p dir perm =
+  try Unix.mkdir dir perm
+  with Unix.Unix_error (Unix.EEXIST, "mkdir", _) -> ()

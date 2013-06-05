@@ -113,12 +113,15 @@ let open_pull pull_id = Lwt_main.run (
   >>= fun github -> Github.(Monad.(run Github_t.(
     github
     >> Pull.get ~user ~repo ~num:pull_id ()
-    >>= fun pull ->
-    try let browser = OpamMisc.getenv "BROWSER" in
-        OpamSystem.command [ browser; pull.pull_html_url ];
-        return ()
-    with Not_found -> raise (MissingEnv "Missing BROWSER environment variable")
-  ))))
+  )))
+  >>= fun { Github_t.pull_html_url } ->
+  try begin
+    let browser = Unix.getenv "BROWSER" in
+    Repo.run_command ~cwd:(Unix.getcwd ()) [ browser; pull_html_url ]
+    >>= fun _ -> return ()
+  end with Not_found ->
+    raise (MissingEnv "Missing BROWSER environment variable")
+)
 
 let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
   let rev_map fn =
@@ -194,7 +197,7 @@ let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
     >> Pull.get ~user ~repo ~num:pull_id ()
   )))))
 
-let () = OpamSystem.mkdir work_dir
+let () = Util.mkdir_p work_dir 0o700
 let build_testable testable repo_opt branch_opt = Lwt_main.run (
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in

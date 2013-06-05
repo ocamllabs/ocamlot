@@ -17,7 +17,7 @@
 
 open Sexplib.Std
 open Lwt
-module Client = OpamClient.SafeAPI
+(*module Client = OpamClient.SafeAPI*)
 
 type compiler = {
   c_version : string;
@@ -59,13 +59,50 @@ let to_string { diff; packages; target; action } =
     (Repo.string_of_diff diff)
     (string_of_target target)
 
-let initialize_opam ~jobs =
-  let repository = OpamRepository.default () in
-  Client.init repository OpamCompiler.system ~jobs
-    `sh (OpamFilename.of_string "") `no
+let make_env alist = Array.of_list (List.map (fun (k,v) -> k^"="^v) alist)
+let basic_env home opam_dir = [
+  "OCAMLRUNPARAM","b";
+  "HOME",home;
+  "OPAMROOT",opam_dir;
+]
+
+let opam_config_env_csh_extractor =
+  Re.(compile (rep (seq [
+    bol; str "setenv"; rep1 space;
+    group (rep1 (compl [space]));
+    rep1 space; char '\"';
+    group (rep1 (compl [set "\""]));
+    char ';'; eol;
+  ])))
+let opam_env home opam_dir =
+  let rec extract_env s pos lst =
+    match Re.(get_all (exec ~pos opam_config_env_csh_extractor s)) with
+      | [|"";"";""|] -> lst
+      | [|m; k; v|] -> extract_env s (pos + (String.length m) + 1) ((k,v)::lst)
+      | _ -> lst
+  in
+  let basic_env = basic_env home opam_dir in
+  let env = make_env basic_env in
+  Repo.run_command ~env ~cwd:home
+    [ "opam" ; "config" ; "env" ; "--csh" ]
+  >>= fun { Repo.r_stdout } ->
+  return (make_env (basic_env@(extract_env r_stdout 0 [])))
+
+let initialize_opam ~env ~cwd ~jobs =
+  Repo.run_command ~env ~cwd
+    [ "opam"; "init"; "--no-setup"; "-j"; string_of_int jobs ]
+  >>= fun _ -> return ()
+
+let add_opam_repository ~env ~cwd name dir =
+  Repo.run_command ~env ~cwd
+    [ "opam"; "repository"; "add"; name; dir ]
+
+let remove_opam_repository ~env ~cwd name =
+  Repo.run_command ~env ~cwd
+    [ "opam"; "repository"; "remove"; name ]
 
 (* clone opam (initialize if necessary) and switch to target compiler *)
-let clone_opam ~jobs root tmp compiler =
+(*let clone_opam ~jobs root tmp compiler =
   let switch = OpamSwitch.of_string (compiler.c_version^compiler.c_build) in
   let master_name = Filename.concat root "ocamlot.opam.master" in
   OpamGlobals.root_dir := master_name;
@@ -87,16 +124,9 @@ let clone_opam ~jobs root tmp compiler =
   OpamState.install_conf_ocaml_config clone_dir switch;
   Printf.eprintf "OCAMLOT cloned opam\n%!";
   clone_dir
+*)
 
-let try_install tmp pkgs =
-  (* TODO: fix this terrible hack *)
-  let env = OpamState.(
-    Array.of_list
-      (List.map (fun (k,v) -> k^"="^v)
-         (("OCAMLRUNPARAM","b")
-          ::("HOME",tmp)
-          ::(get_opam_env (load_env_state "ocamlot-try-install"))))
-  ) in
+let try_install env tmp pkgs =
   let () = Array.iter print_endline env in
   Repo.run_command ~env ~cwd:tmp ("opam" :: "install" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
@@ -105,27 +135,28 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
   let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
+  let opam_root = Filename.concat tmp_name "opam-install" in
+  let env = make_env (basic_env tmp_name opam_root) in
   let merge_name = Filename.concat tmp_name "opam-repository" in
   Unix.mkdir merge_name 0o700;
-  let set_opam_repo merge_dir =
-    let merge_dir = OpamFilename.Dir.of_string merge_dir in
-    (* add merged repository to opam *)
-    Client.REPOSITORY.add
-      (OpamRepositoryName.of_string merge_name)
-      `local merge_dir ~priority:None;
-    (* remove default repository from opam *)
-    Client.REPOSITORY.remove (OpamRepositoryName.of_string "default");
+  let set_opam_repo env merge_name =
+    add_opam_repository ~env ~cwd:merge_name merge_name merge_name
+    >>= fun _ ->
+    remove_opam_repository ~env ~cwd:merge_name "default"
+    >>= fun _ ->
     Printf.eprintf "OCAMLOT repo merge added\n%!";
+    return merge_name
   in
-  (* initialize opam if necessary and alias target compiler *)
-  let clone_dir = clone_opam ~jobs root_dir tmp_name target.compiler in
-  (* merge repositories *)
   catch (fun () ->
+    initialize_opam ~env ~cwd:tmp_name ~jobs
+    >>= fun () ->
+    opam_env tmp_name opam_root
+    >>= fun env ->
     Repo.try_collapse ~dir:merge_name diff
+    >>= set_opam_repo env
     >>= fun merge_dir ->
-    set_opam_repo merge_dir;
     Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
-    try_install tmp_name packages
+    try_install env tmp_name packages
     >>= fun (pkgs, result) ->
     let duration = Time.(elapsed start (now ())) in
 
