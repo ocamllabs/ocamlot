@@ -64,6 +64,7 @@ let basic_env home opam_dir = [
   "OCAMLRUNPARAM","b";
   "HOME",home;
   "OPAMROOT",opam_dir;
+  "PATH",Unix.getenv "PATH";
 ]
 
 let opam_config_env_csh_extractor =
@@ -176,14 +177,14 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
     let duration = Time.(elapsed start (now ())) in
     let err,out = Repo.(match exn with
       | ProcessError (Unix.WEXITED code, r) ->
-          Printf.sprintf "OCAMLOT \"%s %s\" failed (%d) in %s\n"
+          Printf.sprintf "OCAMLOT \"%s %s\" failed (%d) in %s\n%s\n"
             r.r_cmd (String.concat " " r.r_args) code
-            (Time.duration_to_string duration)^r.r_stderr, r.r_stdout
+            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
       | ProcessError (Unix.WSTOPPED signum, r)
       | ProcessError (Unix.WSIGNALED signum, r) ->
-          Printf.sprintf "OCAMLOT \"%s %s\" terminated by signal %d in %s\n"
+          Printf.sprintf "OCAMLOT \"%s %s\" terminated by signal %d in %s\n%s\n"
             r.r_cmd (String.concat " " r.r_args) signum
-            (Time.duration_to_string duration)^r.r_stderr, r.r_stdout
+            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
       | exn ->
           Printf.sprintf "OCAMLOT opam task terminated by \"%s\" in %s\n"
             (Printexc.to_string exn)
