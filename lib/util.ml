@@ -51,3 +51,8 @@ let rec make_fresh_dir ?k ?root_dir prefix =
 let mkdir_p dir perm =
   try Unix.mkdir dir perm
   with Unix.Unix_error (Unix.EEXIST, "mkdir", _) -> ()
+
+let ltws = Re.(compile (seq [
+  bos ; rep space ; group (non_greedy (rep any)) ; rep space ; eos
+]))
+let strip s = Re.(get (exec ltws s) 1)
