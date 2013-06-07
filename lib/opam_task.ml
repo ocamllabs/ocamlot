@@ -45,6 +45,8 @@ type t = {
 
 exception TargetError of target * (compiler * string) list
 
+let ocamlc = "ocamlc"
+
 let string_of_action = function
   | Check -> "check"
   | Build -> "build"
@@ -76,7 +78,7 @@ let basic_env ?(path=[]) home opam_dir =
 let ocamlc_path ?env cwd =
   let env = match env with None -> None | Some e -> Some (make_env e) in
   Repo.run_command ?env ~cwd
-    [ "which" ; "ocamlc" ]
+    [ "which" ; ocamlc ]
   >>= fun { Repo.r_stdout } ->
   let which_ocamlc = Util.strip r_stdout in
   return which_ocamlc
@@ -90,28 +92,36 @@ let version_patt = Re.(seq [
 let version_re = Re.compile version_patt
 
 let compiler_of_path exec =
-  Repo.run_command ~cwd:(Filename.dirname exec)
-    [ exec ; "-version" ]
-  >>= fun { Repo.r_stdout } ->
-  let vstr = Util.strip r_stdout in
-  Printf.eprintf "Got %s for %s\n%!" vstr exec;
-  let matches = Re.(get_all (exec version_re vstr)) in
-  return { c_version = matches.(1); c_build = matches.(2) }
+  catch (fun () ->
+    Repo.run_command ~cwd:(Filename.dirname exec)
+      [ exec ; "-version" ]
+    >>= fun { Repo.r_stdout } ->
+    let vstr = Util.strip r_stdout in
+    Printf.eprintf "Got %s for %s\n%!" vstr exec;
+    let matches = Re.(get_all (exec version_re vstr)) in
+    return { c_version = matches.(1); c_build = matches.(2) }
+  ) (fun exn ->
+    Printf.eprintf "%s -version failed with:\n%s\n%!"
+      exec (Printexc.to_string exn);
+    fail exn
+  )
 
 let list_compilers root subpath =
+  let ok p = Lwt_unix.(access p [F_OK;X_OK]) in
   let listing_stream = Lwt_unix.files_of_directory root in
   Lwt_stream.fold (fun filename l ->
     if filename <> "." && filename <> ".." then filename::l else l
   ) listing_stream []
   >>= Lwt_list.fold_left_s (fun l cdir ->
     let f = Filename.(concat (concat root cdir) subpath) in
-    catch
-      (fun () -> Lwt_unix.(access f [F_OK;X_OK])
-                 >>= fun () -> return (f::l))
+    catch (fun () ->
+      ok f
+      >>= fun () -> ok (Filename.concat f ocamlc)
+      >>= fun () -> return (f::l))
       (fun exn -> return l)
   ) []
   >>= Lwt_list.rev_map_p (fun p ->
-    compiler_of_path (Filename.concat p "ocamlc")
+    compiler_of_path (Filename.concat p ocamlc)
     >>= fun compiler -> return (compiler, p)
   )
 
@@ -123,14 +133,14 @@ let opam_config_env_csh_extractor =
     group (rep1 (compl [set "\""]));
     char ';'; eol;
   ])))
-let opam_env home opam_dir =
+let opam_env ~path home opam_dir =
   let rec extract_env s pos lst =
     match Re.(get_all (exec ~pos opam_config_env_csh_extractor s)) with
       | [|"";"";""|] -> lst
       | [|m; k; v|] -> extract_env s (pos + (String.length m) + 1) ((k,v)::lst)
       | _ -> lst
   in
-  let basic_env = basic_env home opam_dir in
+  let basic_env = basic_env ~path home opam_dir in
   let env = make_env basic_env in
   Repo.run_command ~env ~cwd:home
     [ "opam" ; "config" ; "env" ; "--csh" ]
@@ -180,9 +190,8 @@ let try_install env tmp pkgs =
   Repo.run_command ~env ~cwd:tmp ("opam" :: "install" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
 
-let run ?jobs prefix root_dir {action; diff; packages; target} =
+let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
   let start = Time.now () in
-  let ocaml_dir = Unix.getcwd () in (* TODO: parameter? *)
   let jobs = match jobs with None -> 1 | Some j -> j in
   let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
   let opam_root = Filename.concat tmp_name "opam-install" in
@@ -194,7 +203,7 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
       if (compiler.c_version = c_version)
       then return []
       else
-        (list_compilers ocaml_dir "")
+        (list_compilers ocaml_dir "bin")
          >>= fun compilers -> begin
            try
              return [snd (List.find (fun ({ c_version=v },_) -> v=c_version)
@@ -218,8 +227,12 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
     in
     initialize_opam ~env ~cwd:tmp_name ~jobs
     >>= fun () ->
-    opam_env tmp_name opam_root
+    opam_env ~path tmp_name opam_root
     >>= fun env ->
+    ocamlc_path ~env:(basic_env ~path tmp_name opam_root) ocaml_dir
+    >>= compiler_of_path
+    >>= fun compiler ->
+    let info = string_of_compiler compiler in
     Repo.try_collapse ~dir:merge_name diff
     >>= set_opam_repo env
     >>= fun merge_dir ->
@@ -238,7 +251,7 @@ let run ?jobs prefix root_dir {action; diff; packages; target} =
                      output={
                        err=facts^result.Repo.r_stderr;
                        out=result.Repo.r_stdout;
-                       info=""};
+                       info};
                    })
   ) (fun exn ->
     let duration = Time.(elapsed start (now ())) in

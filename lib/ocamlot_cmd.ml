@@ -248,7 +248,7 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
           ) Opam_task.(tasks_of_packages [target] Build diff packages))
     end
     >>= Lwt_list.map_p (fun (prefix, task) ->
-      Work.execute ~jobs:3 prefix work_dir task
+      Work.execute ~jobs:3 prefix work_dir work_dir task
       >>= fun result -> return (task, result)
     )
     >>= fun job_results ->
@@ -259,7 +259,10 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
 )
 
 let work_url url_str = Lwt_main.run (
-  Work.forever work_dir (Unix.getcwd ()) (Uri.of_string url_str)
+  Work.forever
+    work_dir
+    (Filename.concat (Unix.getcwd ()) "ocaml")
+    (Uri.of_string url_str)
 )
 
 let serve () =
