@@ -125,27 +125,28 @@ let list_compilers root subpath =
     >>= fun compiler -> return (compiler, p)
   )
 
-let opam_config_env_csh_extractor =
+let opam_config_env_extractor =
   Re.(compile (rep (seq [
-    bol; str "setenv"; rep1 space;
-    group (rep1 (compl [space]));
-    rep1 space; char '\"';
-    group (rep1 (compl [set "\""]));
-    char ';'; eol;
+    bol;
+    group (rep1 (compl [set "="]));
+    char '=';
+    group (rep (compl [set ";"]));
+    char ';'; non_greedy (rep any); eol;
   ])))
 let opam_env ~path home opam_dir =
   let rec extract_env s pos lst =
-    match Re.(get_all (exec ~pos opam_config_env_csh_extractor s)) with
+    match Re.(get_all (exec ~pos opam_config_env_extractor s)) with
       | [|"";"";""|] -> lst
       | [|m; k; v|] -> extract_env s (pos + (String.length m) + 1) ((k,v)::lst)
       | _ -> lst
   in
-  let basic_env = basic_env ~path home opam_dir in
-  let env = make_env basic_env in
+  let basic = basic_env ~path home opam_dir in
+  let env = make_env basic in
   Repo.run_command ~env ~cwd:home
-    [ "opam" ; "config" ; "env" ; "--csh" ]
+    [ "opam" ; "config" ; "env" ]
   >>= fun { Repo.r_stdout } ->
-  return (make_env (basic_env@(extract_env r_stdout 0 [])))
+  let env = extract_env r_stdout 0 [] in
+  return ((List.remove_assoc "PATH" basic)@env)
 
 let initialize_opam ~env ~cwd ~jobs =
   Repo.run_command ~env ~cwd
@@ -196,6 +197,32 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
   let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
   let opam_root = Filename.concat tmp_name "opam-install" in
   let { c_version } = target.compiler in
+
+  let opam_fail info exn =
+    let duration = Time.(elapsed start (now ())) in
+    let err,out = Repo.(match exn with
+      | ProcessError (Unix.WEXITED code, r) ->
+          Printf.sprintf "OCAMLOT \"%s %s\" failed (%d) in %s\n%s\n"
+            r.r_cmd (String.concat " " r.r_args) code
+            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
+      | ProcessError (Unix.WSTOPPED signum, r)
+      | ProcessError (Unix.WSIGNALED signum, r) ->
+          Printf.sprintf "OCAMLOT \"%s %s\" terminated by signal %d in %s\n%s\n"
+            r.r_cmd (String.concat " " r.r_args) signum
+            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
+      | exn ->
+          Printf.sprintf "OCAMLOT opam task terminated by \"%s\" in %s\n"
+            (Printexc.to_string exn)
+            (Time.duration_to_string duration), ""
+    ) in
+    (* clean up opam-install *)
+    Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
+    >>= fun _ ->
+    return Result.({ status=Failed; duration;
+                     output={ err; out; info; };
+                   })
+  in
+
   catch (fun () ->
     ocamlc_path ~env:(basic_env tmp_name opam_root) ocaml_dir
     >>= compiler_of_path
@@ -229,54 +256,49 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
     >>= fun () ->
     opam_env ~path tmp_name opam_root
     >>= fun env ->
-    ocamlc_path ~env:(basic_env ~path tmp_name opam_root) ocaml_dir
+    ocamlc_path ~env ocaml_dir
     >>= compiler_of_path
     >>= fun compiler ->
-    let info = string_of_compiler compiler in
-    Repo.try_collapse ~dir:merge_name diff
-    >>= set_opam_repo env
-    >>= fun merge_dir ->
-    Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
-    try_install env tmp_name packages
-    >>= fun (pkgs, result) ->
-    let duration = Time.(elapsed start (now ())) in
+    let info = "Compiler: "^(string_of_compiler compiler)^"\n" in
+    let info = List.fold_left (fun s (k,v) -> s^k^" = "^v^"\n") info env in
 
-    let facts = Printf.sprintf "OCAMLOT \"opam install %s\" succeeded in %s\n"
-      (String.concat " " pkgs)
-      (Time.duration_to_string duration) in
-    Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
-    >>= fun _ ->
-    return Result.({ status=Passed;
-                     duration;
-                     output={
-                       err=facts^result.Repo.r_stderr;
-                       out=result.Repo.r_stdout;
-                       info};
-                   })
-  ) (fun exn ->
-    let duration = Time.(elapsed start (now ())) in
-    let err,out = Repo.(match exn with
-      | ProcessError (Unix.WEXITED code, r) ->
-          Printf.sprintf "OCAMLOT \"%s %s\" failed (%d) in %s\n%s\n"
-            r.r_cmd (String.concat " " r.r_args) code
-            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
-      | ProcessError (Unix.WSTOPPED signum, r)
-      | ProcessError (Unix.WSIGNALED signum, r) ->
-          Printf.sprintf "OCAMLOT \"%s %s\" terminated by signal %d in %s\n%s\n"
-            r.r_cmd (String.concat " " r.r_args) signum
-            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
-      | exn ->
-          Printf.sprintf "OCAMLOT opam task terminated by \"%s\" in %s\n"
-            (Printexc.to_string exn)
-            (Time.duration_to_string duration), ""
-    ) in
-    (* clean up opam-install *)
-    Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
-    >>= fun _ ->
-    return Result.({ status=Failed; duration;
-                     output={ err; out; info=""; };
-                   })
-  )
+    let env = make_env env in
+
+    (*
+    Repo.run_commands ~env ~cwd:tmp_name [
+      [ "which" ; "ocamlfind" ];
+      [ "strace" ; "-f" ; "ocamlfind" ; "ocamlc" ; "-where" ];
+    ]
+    >>= fun [{Repo.r_stdout=wof};{Repo.r_stdout;r_stderr}] ->
+    let info =
+      info^"\n$ which ocamlfind\n"^wof^"\n"
+      ^r_stdout^"\n\n"^r_stderr
+    in
+    *)
+
+    catch (fun () ->
+      Repo.try_collapse ~dir:merge_name diff
+      >>= set_opam_repo env
+      >>= fun merge_dir ->
+      Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
+      try_install env tmp_name packages
+      >>= fun (pkgs, result) ->
+      let duration = Time.(elapsed start (now ())) in
+
+      let facts = Printf.sprintf "OCAMLOT \"opam install %s\" succeeded in %s\n"
+        (String.concat " " pkgs)
+        (Time.duration_to_string duration) in
+      Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
+      >>= fun _ ->
+      return Result.({ status=Passed;
+                       duration;
+                       output={
+                         err=facts^result.Repo.r_stderr;
+                         out=result.Repo.r_stdout;
+                         info};
+                     })
+    ) (opam_fail info)
+  ) (opam_fail "")
 
 let tasks_of_packages targets action diff packages =
   List.fold_left (fun tasks package ->
