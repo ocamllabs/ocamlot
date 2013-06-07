@@ -213,47 +213,53 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
         [repo_of_path (Uri.to_string (url_of_repo main_repo)) bname]
     | Some rpath, Some bname -> [repo_of_path rpath bname]
   in
-  let host = Host.detect () in
-  (* TODO: detect compiler environment *)
-  let target = Opam_task.({
-    host; compiler={ c_version="4.00.1"; c_build="" };
-  }) in
-  begin match testable with
-    | Pull pull_id ->
-        let diff = branch_opt@(diff_of_pull pull_id) in
-        let prefix = string_of_int pull_id in
-        Opam_repo.packages_of_diff prefix work_dir diff
-        >>= fun packages ->
-        return (List.map (fun opam_task ->
-          prefix, Ocamlot.Opam opam_task
-        ) Opam_task.(tasks_of_packages [target] Build diff packages))
-    | Packages packages ->
-        let base = {
-          Repo.repo = Repo.({
-            url=Uri.of_string "";
-            repo_url=git_ssh_of_repo main_repo
-          });
-          reference=Repo.Ref "master";
-          label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
-        } in
-        let diff = branch_opt@[base] in
-        let prefix = String.concat "-" packages in
-        return (List.map (fun opam_task ->
-          prefix, Ocamlot.Opam opam_task
-        ) Opam_task.(tasks_of_packages [target] Build diff packages))
+  let host = Host.detect () in begin
+    Printf.eprintf "detected host: %s\n%!" (Host.to_string host);
+    Opam_task.(ocamlc_path
+                 ~env:(basic_env
+                         work_dir
+                         (Filename.concat work_dir "opam-install"))
+                 work_dir)
+    >>= Opam_task.compiler_of_path
+    >>= fun compiler ->
+    let target = Opam_task.({ host; compiler; }) in
+    begin match testable with
+      | Pull pull_id ->
+          let diff = branch_opt@(diff_of_pull pull_id) in
+          let prefix = string_of_int pull_id in
+          Opam_repo.packages_of_diff prefix work_dir diff
+          >>= fun packages ->
+          return (List.map (fun opam_task ->
+            prefix, Ocamlot.Opam opam_task
+          ) Opam_task.(tasks_of_packages [target] Build diff packages))
+      | Packages packages ->
+          let base = {
+            Repo.repo = Repo.({
+              url=Uri.of_string "";
+              repo_url=git_ssh_of_repo main_repo
+            });
+            reference=Repo.Ref "master";
+            label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
+          } in
+          let diff = branch_opt@[base] in
+          let prefix = String.concat "-" packages in
+          return (List.map (fun opam_task ->
+            prefix, Ocamlot.Opam opam_task
+          ) Opam_task.(tasks_of_packages [target] Build diff packages))
+    end
+    >>= Lwt_list.map_p (fun (prefix, task) ->
+      Work.execute ~jobs:3 prefix work_dir task
+      >>= fun result -> return (task, result)
+    )
+    >>= fun job_results ->
+    return (List.iter (fun (task, result) ->
+      Work.print_result task result
+    ) job_results)
   end
-  >>= Lwt_list.map_p (fun (prefix, task) ->
-    Work.execute ~jobs:3 prefix work_dir task
-    >>= fun result -> return (task, result)
-  )
-  >>= fun job_results ->
-  return (List.iter (fun (task, result) ->
-    Work.print_result task result
-  ) job_results)
 )
 
 let work_url url_str = Lwt_main.run (
-  Work.forever work_dir (Uri.of_string url_str)
+  Work.forever work_dir (Unix.getcwd ()) (Uri.of_string url_str)
 )
 
 let serve () =

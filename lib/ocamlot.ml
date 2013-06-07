@@ -43,6 +43,8 @@ type worker_message =
   | Complete of Result.t
 with sexp
 
+type worker_env = Host.t * Opam_task.compiler list with sexp
+
 type task_event =
   | Advertized of Host.t
   | Refused of worker_id * string
@@ -72,7 +74,7 @@ and worker = {
   engagement : engagement;
   cookie : string;
   worker_id : worker_id;
-  worker_host : Host.t;
+  worker_env : worker_env;
   last_request : Time.t;
   assignment : task_resource option;
   finished : task_resource list;
@@ -134,6 +136,11 @@ let string_of_job = function
 (* TODO: DO *)
 let html_escape s = s
 
+let string_of_worker_env (host,compilers) =
+  (Host.to_string host)
+  ^" with OCaml "
+  ^(String.concat ", " (List.map Opam_task.string_of_compiler compilers))
+
 let string_of_event = Printf.(function
   | Advertized host -> sprintf "advertized for %s host" (Host.to_string host)
   | Refused (worker_id, reason) -> sprintf
@@ -151,8 +158,14 @@ let string_of_event = Printf.(function
     Result.(string_of_status (get_status result))
 )
 
+(* TODO: 1st class pattern match *)
+let match_task { job = Opam opam_task } (worker_host, compilers) =
+  let { Opam_task.target = { Opam_task.host; compiler } } = opam_task in
+  host = worker_host
+  && List.exists Opam_task.(fun c -> c.c_version = compiler.c_version) compilers
+
 (* TODO: better search, yes it's linear right now *)
-let find_task t host =
+let find_task t worker_env =
   Printf.eprintf "looking for task: %d outstanding\n%!"
     (List.length Lwt_stream.(get_available (clone t.outstanding)));
   let rec pull rql = match Lwt_stream.get_available_up_to 1 t.outstanding with
@@ -161,7 +174,7 @@ let find_task t host =
         (List.rev rql), None
     | tr::_ ->
         let (task, Requeue rq) = Resource.content tr in
-        if task.host = host (* TODO: 1st class pattern match *)
+        if match_task task worker_env
         then (List.rev rql), Some tr
         else (Printf.eprintf "skipping task\n%!"; pull ((tr, rq)::rql))
   in
@@ -184,11 +197,18 @@ let update_worker worker action = match action with
 let worker_renderer =
   let render_html event =
     let page worker = Printf.sprintf
-      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>Knight %d : %s</title></head><body><h1>Knight %d</h1><p>Last request: %s</p><p>%s</p></body></html>"
+      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>Knight %d : %s</title></head><body><h1>Knight %d</h1><p>Last transmission: %s</p><p>%s</p><p>Present task assignment: %s</p><p>Completed <strong>%d</strong> tasks</p></body></html>"
       style
       worker.worker_id title worker.worker_id
       (Time.to_string worker.last_request)
-      (Host.to_string worker.worker_host)
+      (string_of_worker_env worker.worker_env)
+      (match worker.assignment with None -> "idle"
+        | Some tr ->
+            let (task,_) = Resource.content tr in
+            Printf.sprintf "<a href='%s'>%s</a>"
+              (Uri.to_string (Resource.uri tr))
+              (string_of_job task.job))
+      (List.length worker.finished)
     in Resource.(match event with
       | Create (worker, r) -> page worker
       | Update (worker_action, r) -> page (content r)
@@ -202,12 +222,12 @@ let lift_worker_to_t = Resource.(function
   | Update (d, r) -> Update_worker (uri r, d)
 )
 
-let new_worker t_resource worker_host =
+let new_worker t_resource worker_env =
   let t = Resource.content t_resource in
   let cookie = Util.(hex_str_of_string (randomish_string 20)) in
   let worker_id = new_worker_id () in
   let worker = {
-    engagement; cookie; worker_id; worker_host;
+    engagement; cookie; worker_id; worker_env;
     assignment = None; finished = [];
     last_request = Time.now ();
   } in
@@ -329,7 +349,7 @@ let t_renderer =
         "<li><a href='%s'>#%d %s</a></li>"
         (Uri.to_string (Resource.uri wr))
         worker.worker_id
-        (Host.to_string worker.worker_host)
+        (string_of_worker_env worker.worker_env)
     in
     let page t = Printf.sprintf
       "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p><p>Assigned workers: %d</p></body></html>"
@@ -464,8 +484,9 @@ let worker_listener service_fn ~base t_resource =
            Body.string_of_body body
            >>= fun body ->
            let () = Printf.eprintf "RECEIVED %s\n%!" body in
-           let host = Host.t_of_sexp (Sexplib.Sexp.of_string body) in
-           let wr = new_worker t_resource host in
+           let sexp = Sexplib.Sexp.of_string body in
+           let worker_env = worker_env_of_sexp sexp in
+           let wr = new_worker t_resource worker_env in
            let worker = Resource.content wr in
            let open Cookie.Set_cookie_hdr in
            let cookie = make (worker_id_cookie,
@@ -475,8 +496,8 @@ let worker_listener service_fn ~base t_resource =
            return (headers, wr)
          end
         ) >>= fun (headers, wr) ->
-        let host = (Resource.content wr).worker_host in
-        match find_task t host with
+        let worker_env = (Resource.content wr).worker_env in
+        match find_task t worker_env with
           | None ->
               add_task_r t.idle
               >>= offer_task ~headers wr

@@ -43,13 +43,17 @@ type t = {
   action : action;
 } with sexp
 
+exception TargetError of target * (compiler * string) list
+
 let string_of_action = function
   | Check -> "check"
   | Build -> "build"
 
+let string_of_compiler { c_version; c_build } = c_version^c_build
+
 let string_of_target { host; compiler } =
   Printf.sprintf "%s on %s"
-    (compiler.c_version^compiler.c_build)
+    (string_of_compiler compiler)
     (Host.to_string host)
 
 let to_string { diff; packages; target; action } =
@@ -60,12 +64,56 @@ let to_string { diff; packages; target; action } =
     (string_of_target target)
 
 let make_env alist = Array.of_list (List.map (fun (k,v) -> k^"="^v) alist)
-let basic_env home opam_dir = [
-  "OCAMLRUNPARAM","b";
-  "HOME",home;
-  "OPAMROOT",opam_dir;
-  "PATH",Unix.getenv "PATH";
-]
+let basic_env ?(path=[]) home opam_dir =
+  let path = match path with [] -> "" | path -> (String.concat ":" path)^":" in
+  [
+    "OCAMLRUNPARAM","b";
+    "HOME",home;
+    "OPAMROOT",opam_dir;
+    "PATH",path^(Unix.getenv "PATH");
+  ]
+
+let ocamlc_path ?env cwd =
+  let env = match env with None -> None | Some e -> Some (make_env e) in
+  Repo.run_command ?env ~cwd
+    [ "which" ; "ocamlc" ]
+  >>= fun { Repo.r_stdout } ->
+  let which_ocamlc = Util.strip r_stdout in
+  return which_ocamlc
+
+let version_patt = Re.(seq [
+  bos;
+  group (seq [rep1 digit; char '.'; rep1 digit; char '.'; rep1 digit]);
+  group (rep any);
+  eos;
+])
+let version_re = Re.compile version_patt
+
+let compiler_of_path exec =
+  Repo.run_command ~cwd:(Filename.dirname exec)
+    [ exec ; "-version" ]
+  >>= fun { Repo.r_stdout } ->
+  let vstr = Util.strip r_stdout in
+  Printf.eprintf "Got %s for %s\n%!" vstr exec;
+  let matches = Re.(get_all (exec version_re vstr)) in
+  return { c_version = matches.(1); c_build = matches.(2) }
+
+let list_compilers root subpath =
+  let listing_stream = Lwt_unix.files_of_directory root in
+  Lwt_stream.fold (fun filename l ->
+    if filename <> "." && filename <> ".." then filename::l else l
+  ) listing_stream []
+  >>= Lwt_list.fold_left_s (fun l cdir ->
+    let f = Filename.(concat (concat root cdir) subpath) in
+    catch
+      (fun () -> Lwt_unix.(access f [F_OK;X_OK])
+                 >>= fun () -> return (f::l))
+      (fun exn -> return l)
+  ) []
+  >>= Lwt_list.rev_map_p (fun p ->
+    compiler_of_path (Filename.concat p "ocamlc")
+    >>= fun compiler -> return (compiler, p)
+  )
 
 let opam_config_env_csh_extractor =
   Re.(compile (rep (seq [
@@ -134,21 +182,40 @@ let try_install env tmp pkgs =
 
 let run ?jobs prefix root_dir {action; diff; packages; target} =
   let start = Time.now () in
+  let ocaml_dir = Unix.getcwd () in (* TODO: parameter? *)
   let jobs = match jobs with None -> 1 | Some j -> j in
   let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
   let opam_root = Filename.concat tmp_name "opam-install" in
-  let env = make_env (basic_env tmp_name opam_root) in
-  let merge_name = Filename.concat tmp_name "opam-repository" in
-  Unix.mkdir merge_name 0o700;
-  let set_opam_repo env merge_name =
-    add_opam_repository ~env ~cwd:merge_name merge_name merge_name
-    >>= fun _ ->
-    remove_opam_repository ~env ~cwd:merge_name "default"
-    >>= fun _ ->
-    Printf.eprintf "OCAMLOT repo merge added\n%!";
-    return merge_name
-  in
+  let { c_version } = target.compiler in
   catch (fun () ->
+    ocamlc_path ~env:(basic_env tmp_name opam_root) ocaml_dir
+    >>= compiler_of_path
+    >>= fun compiler -> begin
+      if (compiler.c_version = c_version)
+      then return []
+      else
+        (list_compilers ocaml_dir "")
+         >>= fun compilers -> begin
+           try
+             return [snd (List.find (fun ({ c_version=v },_) -> v=c_version)
+                            compilers)
+                    ]
+           with Not_found ->
+             fail (TargetError (target, compilers))
+         end
+    end
+    >>= fun path ->
+    let env = make_env (basic_env ~path tmp_name opam_root) in
+    let merge_name = Filename.concat tmp_name "opam-repository" in
+    Unix.mkdir merge_name 0o700;
+    let set_opam_repo env merge_name =
+      add_opam_repository ~env ~cwd:merge_name merge_name merge_name
+      >>= fun _ ->
+      remove_opam_repository ~env ~cwd:merge_name "default"
+      >>= fun _ ->
+      Printf.eprintf "OCAMLOT repo merge added\n%!";
+      return merge_name
+    in
     initialize_opam ~env ~cwd:tmp_name ~jobs
     >>= fun () ->
     opam_env tmp_name opam_root

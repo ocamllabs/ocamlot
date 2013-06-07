@@ -44,9 +44,17 @@ let notify_re =
   Re.(seq [str "github/"; group path_seg; char '/'; group path_seg])
 let notify_query = "notify"
 let targets = Opam_task.(Host.([
+(*  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "3.12.1";
+                 c_build = ""; }; }; *)
   { host = { os = Linux;
              arch = X86_64; };
     compiler = { c_version = "4.00.1";
+                 c_build = ""; }; };
+  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "4.01.0";
                  c_build = ""; }; };
 ]))
 

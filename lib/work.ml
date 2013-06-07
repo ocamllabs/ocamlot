@@ -109,8 +109,8 @@ let accept_task_offer ~continue ~env (uri,task) =
         Printf.eprintf "OCAMLOT worker didn't get Acceptance response\n";
         return ()
 
-let request_task ~continue ~env uri =
-  let body = serialize Host.(sexp_of_t (detect ())) in
+let request_task ~continue ~env worker_env uri =
+  let body = serialize (Ocamlot.sexp_of_worker_env worker_env) in
   let headers = env.headers in
   Client.post ~headers ?body uri
   >>= function
@@ -134,8 +134,11 @@ let request_task ~continue ~env uri =
         Printf.eprintf "OCAMLOT worker didn't get a response: quitting\n";
         return ()
 
-let forever work_dir uri =
+let forever work_dir ocaml_dir uri =
   let url = Uri.resolve "" uri (Uri.of_string "?queue") in
+  let host = Host.detect () in
+  Opam_task.list_compilers ocaml_dir ""
+  >>= fun compilers ->
   let rec work ~env =
-    request_task ~continue:work ~env url
+    request_task ~continue:work ~env (host, (List.map fst compilers)) url
   in work { headers = Header.init (); work_dir }
