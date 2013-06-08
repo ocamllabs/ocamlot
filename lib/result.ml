@@ -45,8 +45,8 @@ let to_html { status; duration; output } =
     | Passed -> "passed"
     | Failed -> "failed"
   in
-  Printf.sprintf "<div class='summary'><span class='status %s'>%s</span> in <span class='duration'>%s</span></div>\n<pre class='info'>%s</pre>\n<pre class='stdout'>%s</pre>\n<pre class='stderr'>%s</pre>"
+  Printf.sprintf "<div class='summary'><span class='status %s'>%s</span> in <span class='duration'>%s</span></div>\n<span>stderr</span><pre class='stderr'>%s</pre>\n<span>stdout</span><pre class='stdout'>%s</pre>\n<span>environment</span><pre class='info'>%s</pre>"
     status_class (string_of_status status) (Time.duration_to_string duration)
-    output.info
-    output.out
     output.err
+    output.out
+    output.info

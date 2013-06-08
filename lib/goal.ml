@@ -26,14 +26,104 @@ let update_goal goal = function
   | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
+module Table = struct
+  type 'a t = (string, (string, 'a) Hashtbl.t) Hashtbl.t
+
+  let create rowfn colfn els =
+    let t = Hashtbl.create 10 in
+    List.iter
+      (fun el ->
+        let row = rowfn el in
+        let cols =
+          try Hashtbl.find t row
+          with Not_found -> Hashtbl.create 10
+        in
+        Hashtbl.replace t row cols;
+        Hashtbl.add cols (colfn el) el
+      ) els;
+    t
+
+  let cell_count tbl = Hashtbl.fold
+    (fun _ v a ->
+      a + (Hashtbl.length v)
+    ) tbl 0
+
+  let columns tbl =
+    let col_set = Hashtbl.create 10 in
+    Hashtbl.iter (fun _ ct ->
+      Hashtbl.iter (fun c _ -> Hashtbl.replace col_set c ()) ct
+    ) tbl;
+    Hashtbl.fold (fun c () l -> c::l) col_set []
+
+  let rows tbl =
+    let cols = columns tbl in
+    Hashtbl.fold (fun r ct l ->
+      (r, List.map (Hashtbl.find_all ct) cols)::l
+    ) tbl []
+end
+
 let goal_renderer parent_title parent_uri =
   let render_html event =
-    let render_task tr =
-      let task = fst (Resource.content tr) in
-      let tm, status = List.hd task.log in
-      Printf.sprintf "<li><a href='%s'>%s (%s) : %s</a></li>"
-        (Uri.to_string (Resource.uri tr))
-        (string_of_event status) (Time.to_string tm) (string_of_job task.job)
+    let render_tasks_table trl =
+      let opam_task_of_tr tr = match fst (Resource.content tr) with
+        | { job = Opam ot } -> ot
+      in
+      let simple_opam_tasks, other_tasks = List.partition (fun tr ->
+        match opam_task_of_tr tr with
+          | { Opam_task.packages = [ _ ] } -> true
+          | _ -> false) trl
+      in
+      let tbl = Table.create
+        Opam_task.(fun tr ->
+          match opam_task_of_tr tr with
+            | { packages = pkg::_ } -> pkg)
+        Opam_task.(fun tr ->
+          match opam_task_of_tr tr with
+            | { target } -> string_of_target target)
+        simple_opam_tasks
+      in
+      let task_cell trl =
+        let cell_link tr =
+          let (task, _) = Resource.content tr in
+          Printf.sprintf "<a href='%s'>%s</a>"
+            (Uri.to_string (Resource.uri tr))
+            (string_of_event (snd (List.hd task.log)))
+        in
+        "<td>"^(match trl with
+          | [] -> ""
+          | [tr] -> cell_link tr
+          | trl -> "<ul>"^(List.fold_left (fun s tr ->
+            s^"<li>"^(cell_link tr)^"</li>\n"
+          ) "" trl)^"</ul>"
+        )^"</td>"
+      in
+      (if Table.cell_count tbl > 0
+       then "<table><tr>"^
+          (String.concat "\n"
+             (List.map (fun h -> "<th>"^h^"</th>") (Table.columns tbl)))^"</tr>"^
+          (String.concat "\n"
+             (List.map (fun (rl,r) ->
+               "<tr><th>"^rl^"</th>"^(String.concat "\n"
+                                        (List.map task_cell r))^"</tr>")
+                (Table.rows tbl)))
+          ^"</table>"
+       else ""
+      )^(
+        if List.length other_tasks > 0
+        then "<ul>"^
+          (String.concat "\n"
+             (List.map (fun tr ->
+               let (task, _) = Resource.content tr in
+               let tm, status = List.hd task.log in
+               Printf.sprintf "<li><a href='%s'>%s (%s) : %s</a></li>"
+                 (Uri.to_string (Resource.uri tr))
+                 (string_of_event status)
+                 (Time.to_string tm)
+                 (string_of_job task.job)
+              ) other_tasks)
+          )^"</ul>"
+        else ""
+       )
     in
     let render_subgoal gr =
       let goal = Resource.content gr in
@@ -42,11 +132,10 @@ let goal_renderer parent_title parent_uri =
         goal.title
     in
     let page goal = Printf.sprintf
-      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><p>%s</p><ul>%s</ul><ul>%s</ul><p><a href='%s'>%s</a></body></html>"
+      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><p>%s</p>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
       Ocamlot.style
       goal.title title goal.title goal.descr
-      (String.concat "\n" (List.rev_map render_task
-                             (Resource.to_list goal.tasks)))
+      (render_tasks_table (Resource.to_list goal.tasks))
       (String.concat "\n" (List.rev_map render_subgoal
                              (Resource.to_list goal.subgoals)))
       (Uri.to_string parent_uri) parent_title
@@ -91,8 +180,13 @@ let generate_task_uri base genfn task =
   Uri.(resolve "" base
          (of_string (Printf.sprintf "task/%d" (genfn ()))))
 
+let subresource_base uri =
+  let path = Uri.path uri in
+  if path.[String.length path - 1] = '/' then uri
+  else Uri.with_path uri (path^"/")
+
 let base_of_resource_slug resource slug =
-  let base = Resource.uri resource in
+  let base = subresource_base (Resource.uri resource) in
   Uri.(resolve "" base (of_string (slug^"/")))
 
 let make_integration t_resource ~title ~descr ~slug =

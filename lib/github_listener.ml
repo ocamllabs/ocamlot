@@ -121,7 +121,7 @@ let scan endpoint gh_repo_resource =
 let attach listener ~user ~repo =
   let name = user^"/"^repo in
   let gh_repo_resource = Goal.make_integration listener.t
-    ~title:(sprintf "Test Package Repository %s" name)
+    ~title:name
     ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
     ~slug:("github/"^name)
   in
