@@ -88,7 +88,8 @@ let goal_renderer parent_title parent_uri =
           let task_state = match snd (List.hd task.log) with
             | Completed (_, { Result.status = Result.Passed }) -> "PASSED"
             | Completed (_, { Result.status = Result.Failed }) -> "FAILED"
-            | _ -> "pending"
+            | Started _ | Checked_in _ -> "pending"
+            | _ -> "queued"
           in
           Printf.sprintf "<a href='%s'>%s</a>"
             (Uri.to_string (Resource.uri tr))
