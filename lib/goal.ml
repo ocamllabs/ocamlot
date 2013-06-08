@@ -85,9 +85,14 @@ let goal_renderer parent_title parent_uri =
       let task_cell trl =
         let cell_link tr =
           let (task, _) = Resource.content tr in
+          let task_state = match snd (List.hd task.log) with
+            | Completed (_, { Result.status = Result.Passed }) -> "PASSED"
+            | Completed (_, { Result.status = Result.Failed }) -> "FAILED"
+            | _ -> "pending"
+          in
           Printf.sprintf "<a href='%s'>%s</a>"
             (Uri.to_string (Resource.uri tr))
-            (string_of_event (snd (List.hd task.log)))
+            task_state
         in
         "<td>"^(match trl with
           | [] -> ""
@@ -98,7 +103,7 @@ let goal_renderer parent_title parent_uri =
         )^"</td>"
       in
       (if Table.cell_count tbl > 0
-       then "<table><tr>"^
+       then "<table><tr><th></th>"^
           (String.concat "\n"
              (List.map (fun h -> "<th>"^h^"</th>") (Table.columns tbl)))^"</tr>"^
           (String.concat "\n"
