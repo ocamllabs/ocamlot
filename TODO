@@ -1,14 +1,13 @@
 * service
   * github scanning
-  * task generation
-  * report storage
+  * daemonize + control channel
 * cmd
   * work directory management
   * switch flag
   * output replay shell script
   * isolate environment (chroot?)
   * scan system compilers
-  * worker client
+  * persist worker cookie
 * opam task
   * metadata check
   * mk-repo check
@@ -17,6 +16,9 @@
     * transient
     * missing dep
     * environmental
+* ocaml task
+  * monitor ocaml repo
+  * install compiler variants and generate tests
 * fix opam2web
 * policy
   * test downstream
