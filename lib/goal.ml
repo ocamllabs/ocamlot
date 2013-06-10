@@ -112,7 +112,7 @@ let goal_renderer parent_title parent_uri =
         (fun tr ->
           let packages = (opam_task_of_tr tr).Opam_task.packages in
           match last_event (Resource.content tr), packages with
-            | Completed (_,_) | Started _ | Checked_in _, pkg::_ -> Some pkg
+            | (Completed (_,_) | Started _ | Checked_in _), pkg::_ -> Some pkg
             | _ -> None)
         target_colfn
         simple_opam_tasks
