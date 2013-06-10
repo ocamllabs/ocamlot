@@ -8,6 +8,7 @@
 
 ### Worker
 
+../ocamlot/install_ocaml.sh <NICKNAME> <PATH_TO_OCAML_SRC>
 ../ocamlot/ocamlot_cmd.native work <URL>
 
 ## Requirements
