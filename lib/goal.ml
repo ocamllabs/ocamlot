@@ -92,6 +92,9 @@ let goal_renderer parent_title parent_uri =
       let opam_task_of_tr tr = match Resource.content tr with
         | { job = Opam ot } -> ot
       in
+      let target_colfn tr = Opam_task.(match opam_task_of_tr tr with
+        | { target } -> string_of_target target) in
+      let last_event task = snd (List.hd task.log) in
       let simple_opam_tasks, other_tasks = List.partition (fun tr ->
         match opam_task_of_tr tr with
           | { Opam_task.packages = [ _ ] } -> true
@@ -102,15 +105,22 @@ let goal_renderer parent_title parent_uri =
           match opam_task_of_tr tr with
             | { packages = pkg::_ } -> Some pkg
             | { packages = [] } -> None)
-        Opam_task.(fun tr ->
-          match opam_task_of_tr tr with
-            | { target } -> string_of_target target)
+        target_colfn
+        simple_opam_tasks
+      in
+      let done_tbl = Table.create
+        (fun tr ->
+          let packages = (opam_task_of_tr tr).Opam_task.packages in
+          match last_event (Resource.content tr), packages with
+            | Completed (_,_) | Started _ | Checked_in _, pkg::_ -> Some pkg
+            | _ -> None)
+        target_colfn
         simple_opam_tasks
       in
       let task_cell trl =
         let cell_link tr =
           let task = Resource.content tr in
-          let task_state = match snd (List.hd task.log) with
+          let task_state = match last_event task with
             | Completed (_, { Result.status = Result.Passed }) -> "PASSED"
             | Completed (_, { Result.status = Result.Failed }) -> "FAILED"
             | Started _ | Checked_in _ -> "pending"
@@ -128,8 +138,9 @@ let goal_renderer parent_title parent_uri =
           ) "" trl)^"</ul>"
         )^"</td>"
       in
-      (if Table.cell_count tbl > 0
-       then "<table><tr><th></th>"^
+      let render_table tbl =
+        if Table.cell_count tbl > 0
+        then "<table><tr><th></th>"^
           (String.concat "\n"
              (List.map (fun h -> "<th>"^h^"</th>") (Table.columns tbl)))^"</tr>"^
           (String.concat "\n"
@@ -138,8 +149,11 @@ let goal_renderer parent_title parent_uri =
                                         (List.map task_cell r))^"</tr>")
                 (Table.rows tbl)))
           ^"</table>"
-       else ""
-      )^(
+        else ""
+      in
+      (render_table done_tbl)
+      ^(render_table tbl)
+      ^(
         if List.length other_tasks > 0
         then "<ul>"^
           (String.concat "\n"
