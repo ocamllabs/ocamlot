@@ -65,7 +65,6 @@ type task = {
   job : job;
 } with sexp
 type task_offer = Uri.t * job with sexp
-type task_record = string * task with sexp
 
 type task_action =
   | Worker of worker_id * worker_message

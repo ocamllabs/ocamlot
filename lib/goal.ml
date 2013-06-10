@@ -211,8 +211,27 @@ let lift_subgoal_to_goal = Resource.(function
 let max_task_record_id task_records =
   List.fold_left (fun x (id,_) -> max (int_of_string id) x) 0 task_records
 
-(* TODO: DO *)
-let read_tasks path = return []
+let read_tasks path =
+  let ok p = Lwt_unix.(access p [F_OK;R_OK]) in
+  let task_path = Filename.concat path task_subpath in
+  if Sys.file_exists task_path
+  then
+    let listing_stream = Lwt_unix.files_of_directory task_path in
+    Lwt_stream.fold (fun filename l ->
+      if filename <> "." && filename <> ".." then filename::l else l
+    ) listing_stream []
+     >>= Lwt_list.fold_left_s (fun l tid ->
+       let f = Filename.(concat task_path tid) in
+       catch (fun () ->
+         ok f
+         >>= fun () ->
+         Lwt_io.(with_file ~mode:input f Lwt_io.read)
+         >>= fun buf ->
+         let sexp = Sexplib.Sexp.of_string buf in
+         return ((tid,task_of_sexp sexp)::l))
+         (fun exn -> return l)
+     ) []
+  else return []
 
 let write_task dir tr =
   let uri = Resource.uri tr in
@@ -243,8 +262,13 @@ let write_task dir tr =
     return ()
   ) (Repo.die "Goal.write_task")
 
-(* TODO: set difference *)
+module TaskSet = Set.Make(struct
+  type t = Opam_task.t
+  let compare = compare
+end)
 let missing_tasks user repo targets task_records =
+  let set = List.fold_left (fun set (_,{ job=Opam task }) ->
+    TaskSet.add task set) TaskSet.empty task_records in
   let branch = "master" in
   let repo_url = Uri.of_string
     (Printf.sprintf "git://github.com/%s/%s.git" user repo) in
@@ -257,7 +281,8 @@ let missing_tasks user repo targets task_records =
   catch (fun () ->
     Opam_repo.packages_of_repo work_dir repo
     >>= fun packages ->
-    return Opam_task.(tasks_of_packages targets Build [repo] packages)
+    let tasks = Opam_task.(tasks_of_packages targets Build [repo] packages) in
+    return (List.filter (fun task -> not (TaskSet.mem task set)) tasks)
   ) (Repo.die "Goal.missing_tasks")
 
 let new_goal t_resource goal on_complete =

@@ -64,18 +64,20 @@ let forever base port =
       let name = user^"/"^repo in
       let slug = "github/"^name in
       let goal_state_path = Filename.concat state_path slug in
+
+      Goal.read_tasks goal_state_path
+      >>= fun repo_trs ->
+
       let resource = Goal.make_integration ocamlot
         ~title:slug
         ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
         ~slug
-        ~min_id:(Goal.max_task_record_id [])
+        ~min_id:(Goal.max_task_record_id repo_trs)
         ~goal_state_path
       in
 
       let goal = Resource.content resource in
-
-      Goal.read_tasks goal_state_path
-      >>= fun repo_trs ->
+      let base = Goal.subresource_base (Resource.uri resource) in
 
       Goal.missing_tasks user repo targets repo_trs
       >>= fun tasks ->
@@ -91,7 +93,9 @@ let forever base port =
         | _ -> ()
       ) tasks;
 
-      List.iter (fun (uri,task) ->
+      List.iter (fun (tid,task) ->
+        let uri = Uri.resolve "" base
+          (Uri.of_string (Filename.concat Goal.task_subpath tid)) in
         Resource.archive goal.Ocamlot.completed fst
           (Resource.create uri (task,()) (fun t _ -> t)
              (Ocamlot.task_renderer resource));
