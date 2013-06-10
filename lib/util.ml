@@ -48,9 +48,12 @@ let rec make_fresh_dir ?k ?root_dir prefix =
   with Unix.Unix_error (Unix.EEXIST, "mkdir", _) ->
     make_fresh_dir ~k:(k+1) ~root_dir prefix
 
-let mkdir_p dir perm =
-  try Unix.mkdir dir perm
-  with Unix.Unix_error (Unix.EEXIST, "mkdir", _) -> ()
+let rec mkdir_p dir perm =
+  if not (Sys.file_exists dir)
+  then begin
+    mkdir_p (Filename.dirname dir) perm;
+    Unix.mkdir dir perm
+  end
 
 let ltws = Re.(compile (seq [
   bos ; rep space ; group (non_greedy (rep any)) ; rep space ; eos
