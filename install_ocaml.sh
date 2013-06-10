@@ -8,5 +8,6 @@ mkdir -p $OCAML_PREFIX_DIR
 
 cd $OCAML_SRC_DIR
 ./configure -prefix $OCAML_PREFIX_DIR/$OCAML_SLUG
+make distclean
 make world.opt
 make install
