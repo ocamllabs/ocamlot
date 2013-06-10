@@ -13,8 +13,23 @@
 
 ## Requirements
 
+System libraries:
+
+libssl
+
+OPAM Packages:
+
+oasis-mirage, cohttp, cryptokit, github, lwt, cmdliner, re, sexplib, uri
+
+These packages are installable with `./install_deps.sh`
+
+Pinned Dev packages:
+
 avsm/ocaml-github@master
 
 dsheets/ocaml-cohttp@magic-biscuit
 
-OCamlPro/opam@master
+## Build
+
+oasis setup
+make
