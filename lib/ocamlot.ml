@@ -59,6 +59,7 @@ with sexp
 type task_log = (Time.t * task_event) list with sexp
 type job = Opam of Opam_task.t with sexp
 type task = {
+  href : Uri.t;
   log : task_log;
   host : Host.t;
   job : job;
@@ -263,15 +264,16 @@ let task_renderer goal_resource =
       Printf.sprintf "<li>%s at %s</li>"
         (string_of_event event) (Time.to_string time)
     in
-    let page { log; job } =
+    let page { href; log; job } =
       let job_descr = string_of_job job in
       let (time, event) = List.hd log in
       Printf.sprintf
-        "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><div id='update'>%s</div><div id='status'>%s</div>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
+        "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><div id='update'>%s</div><div id='status'>%s</div><div id='source'><a href='%s'>%s</a></div>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
         style
         job_descr title job_descr
         (Time.to_string time)
         (string_of_event event)
+        (Uri.to_string href) (Uri.to_string href)
         (match event with
           | Completed (wid, result) ->
               Printf.sprintf "<div id='result'>%s</div>"
@@ -296,10 +298,11 @@ let lift_task_to_goal = Resource.(function
   | Update (d, r) -> Update_task (uri r, d)
 )
 
-let queue_job goal_resource job =
+let queue_job goal_resource job href =
   let goal = Resource.content goal_resource in
   let host = host_of_job job in
   let task = {
+    href;
     log = [Time.now (), Advertized host];
     host;
     job;
@@ -431,7 +434,7 @@ let rec monitor_job start_time worker_resource task_resource stream =
       let worker_resource = Resource.update worker_resource
         (Quit task_resource) in
       let worker = Resource.content worker_resource in
-      let tr = Resource.update task_resource
+      let _tr = Resource.update task_resource
         (Time_out (worker.worker_id,
                    Time.elapsed start_time (Time.now ()))) in
       return ()
@@ -528,10 +531,10 @@ let worker_listener service_fn ~base t_resource =
               let tr = Resource.update tr (Worker (worker.worker_id,message)) in
               begin match message with
                 | Refuse _ | Fail_task _ ->
-                    let wr = Resource.update wr (Quit tr) in
+                    let _wr = Resource.update wr (Quit tr) in
                     ()
                 | Complete _ ->
-                    let wr = Resource.update wr (Finish tr) in
+                    let _wr = Resource.update wr (Finish tr) in
                     ()
                 | _ -> ()
               end;

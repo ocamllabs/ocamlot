@@ -59,8 +59,8 @@ let notification_handler user repo conn_id ?body req =
 
 (* TODO: packages_of_diff worker task, commit status checking *)
 let scan targets endpoint gh_repo_resource =
+  let {Github_hook.github; user; repo} = endpoint in
   Github.(Monad.(run Github_t.(
-    let {Github_hook.github; user; repo} = endpoint in
     github >> Pull.for_repo ~user ~repo ())))
   >>= Lwt_list.iter_p (fun pull ->
     let diff = Opam_repo.diff_of_pull pull in
@@ -78,7 +78,13 @@ let scan targets endpoint gh_repo_resource =
       >>= fun packages ->
       List.iter (Printf.eprintf "PACKAGE %s\n%!") packages;
       List.iter (fun task ->
-        ignore Ocamlot.(queue_job pull_goal (Opam task))
+        let href = Printf.sprintf
+          "https://github.com/%s/%s/blob/master/packages/%s/opam"
+          user repo (List.hd packages)
+        in ignore Ocamlot.(queue_job
+                             pull_goal
+                             (Opam task)
+                             (Uri.of_string href))
       ) Opam_task.(tasks_of_packages targets Build diff packages);
       return ()
     ) (Repo.die (Printf.sprintf "Github_listener.scan \"%s\""

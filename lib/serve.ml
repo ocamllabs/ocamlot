@@ -79,8 +79,16 @@ let forever base port =
 
       Goal.missing_tasks user repo targets repo_trs
       >>= fun tasks ->
-      List.iter (fun task ->
-        ignore (Ocamlot.queue_job resource (Ocamlot.Opam task));
+      List.iter (function
+        | { Opam_task.packages = pkg::_ } as task ->
+            let href = Printf.sprintf
+              "https://github.com/%s/blob/master/packages/%s/opam"
+              name pkg
+            in ignore (Ocamlot.queue_job
+                         resource
+                         (Ocamlot.Opam task)
+                         (Uri.of_string href))
+        | _ -> ()
       ) tasks;
 
       List.iter (fun (uri,task) ->
