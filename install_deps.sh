@@ -1,9 +1,9 @@
 #!/bin/sh
 
-# libssl is required
+# system library libssl is required
 
 opam install \
-oasis \
+oasis-mirage \
 cohttp \
 cryptokit \
 github \
