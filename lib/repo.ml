@@ -190,3 +190,44 @@ let try_collapse ~dir = function
     clone_repo ~dir ~commit:base
     >>= (merge (List.tl diffl))
   end
+
+let add ~path =
+  let cwd = Filename.dirname path in
+  run_command ~cwd [
+    "git" ; "add" ; path ;
+  ]
+  >>= fun _ -> return cwd
+
+let commit ~dir ~message =
+  run_command ~cwd:dir [
+    "git" ; "commit" ; "-m" ; message ;
+  ]
+  >>= fun _ -> return dir
+
+let push ~dir =
+  run_command ~cwd:dir [
+    "git" ; "push" ;
+  ]
+  >>= fun _ -> return dir
+
+let process_error site = function
+  | ProcessError (Unix.WEXITED code, r) ->
+      Printf.sprintf "%s\nOCAMLOT %s \"%s %s\" failed (%d) in %s\n"
+        r.r_stderr site r.r_cmd (String.concat " " r.r_args) code
+        (Time.duration_to_string r.r_duration), r.r_stdout
+  | ProcessError (Unix.WSTOPPED signum, r)
+  | ProcessError (Unix.WSIGNALED signum, r) ->
+      Printf.sprintf "%s\nOCAMLOT %s \"%s %s\" terminated by signal %d in %s\n"
+        r.r_stderr site r.r_cmd (String.concat " " r.r_args) signum
+        (Time.duration_to_string r.r_duration), r.r_stdout
+  | exn ->
+      Printf.sprintf "OCAMLOT %s terminated by \"%s\"\n%s\n"
+        site (Printexc.to_string exn)
+        (if Printexc.backtrace_status ()
+         then "Backtrace:\n"^(Printexc.get_backtrace ())
+         else "No backtrace available."), ""
+
+let die site exn =
+  let err, out = process_error site exn in
+  Printf.eprintf "stdout: %s\nstderr: %s\n%!" out err;
+  exit 1

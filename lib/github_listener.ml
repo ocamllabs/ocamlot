@@ -32,6 +32,7 @@ type t = {
   t : Ocamlot.t_resource;
   registry : (string, Github_hook.endpoint) Hashtbl.t;
   jar : Jar.t;
+  targets : Opam_task.target list;
 }
 
 exception TokenMissing of (Jar.t * string)
@@ -43,20 +44,6 @@ let path_seg = Re.(rep1 (compl [char '/']))
 let notify_re =
   Re.(seq [str "github/"; group path_seg; char '/'; group path_seg])
 let notify_query = "notify"
-let targets = Opam_task.(Host.([
-(*  { host = { os = Linux;
-             arch = X86_64; };
-    compiler = { c_version = "3.12.1";
-                 c_build = ""; }; }; *)
-  { host = { os = Linux;
-             arch = X86_64; };
-    compiler = { c_version = "4.00.1";
-                 c_build = ""; }; };
-  { host = { os = Linux;
-             arch = X86_64; };
-    compiler = { c_version = "4.01.0";
-                 c_build = ""; }; };
-]))
 
 let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlotd")
 let () = Util.mkdir_p work_dir 0o700
@@ -71,7 +58,7 @@ let notification_handler user repo conn_id ?body req =
   >>= S.some_response
 
 (* TODO: packages_of_diff worker task, commit status checking *)
-let scan endpoint gh_repo_resource =
+let scan targets endpoint gh_repo_resource =
   Github.(Monad.(run Github_t.(
     let {Github_hook.github; user; repo} = endpoint in
     github >> Pull.for_repo ~user ~repo ())))
@@ -94,38 +81,12 @@ let scan endpoint gh_repo_resource =
         ignore Ocamlot.(queue_job pull_goal (Opam task))
       ) Opam_task.(tasks_of_packages targets Build diff packages);
       return ()
-    ) Repo.(function
-      | ProcessError (Unix.WEXITED code, r) ->
-          Printf.eprintf "stdout: %s\nstderr: %s\n'%s' exited with code %d\n%!"
-            r.r_stdout r.r_stderr
-            (String.concat " " (r.r_cmd::r.r_args))
-            code;
-          return ()
-      | ProcessError (Unix.WSTOPPED signum, r)
-      | ProcessError (Unix.WSIGNALED signum, r) ->
-          Printf.eprintf "'%s' killed with signal %d\n%!"
-            (String.concat " " (r.r_cmd::r.r_args))
-            signum;
-          return ()
-      | exn ->
-          Printf.eprintf "git package diff of '%s' failed because '%s'\n%s\n%!"
-            (Uri.to_string (Resource.uri pull_goal))
-            (Printexc.to_string exn)
-            (if Printexc.backtrace_status ()
-             then "Backtrace:\n"^(Printexc.get_backtrace ())
-             else "No backtrace available.");
-          return ()
-    )
+    ) (Repo.die (Printf.sprintf "Github_listener.scan \"%s\""
+                   (Uri.to_string (Resource.uri pull_goal))))
   )
 
-let attach listener ~user ~repo =
+let attach listener ~user ~repo gh_repo_resource =
   let name = user^"/"^repo in
-  let slug = "github/"^name in
-  let gh_repo_resource = Goal.make_integration listener.t
-    ~title:slug
-    ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
-    ~slug
-  in
   let uri = Resource.uri gh_repo_resource in
   Jar.get listener.jar ~name
   >>= function
@@ -160,13 +121,13 @@ let attach listener ~user ~repo =
                 (github_error_str ~user ~repo);
               return ()
           | {status=Connected} ->
-              scan endpoint gh_repo_resource
+              scan listener.targets endpoint gh_repo_resource
         )
 
-let make_listener t =
+let make_listener t targets =
   Jar.init ()
   >>= fun jar -> return {
-    t; registry = Hashtbl.create 10; jar;
+    t; registry = Hashtbl.create 10; jar; targets;
   }
 
 let service {t; registry} service_fn =

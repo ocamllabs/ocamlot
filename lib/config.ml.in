@@ -7,6 +7,5 @@ let outside_port = 443
 (* The port on which to listen *)
 let port = 8080
 
-(* The local path of the store directories *)
-let public_store_path = "store/public"
-let private_store_path = "store/private"
+(* The local path of the ocamlot-state working directory *)
+let state_path = "state"

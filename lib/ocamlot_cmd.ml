@@ -199,6 +199,7 @@ let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
 
 let () = Util.mkdir_p work_dir 0o700
 let build_testable testable repo_opt branch_opt = Lwt_main.run (
+  let jobs = try int_of_string (Sys.getenv "OPAMJOBS") with Not_found -> 1 in
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
     let repo_url = Repo.URL Uri.(resolve "file" cwd (of_string rpath)) in
@@ -248,7 +249,7 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
           ) Opam_task.(tasks_of_packages [target] Build diff packages))
     end
     >>= Lwt_list.map_p (fun (prefix, task) ->
-      Work.execute ~jobs:3 prefix work_dir work_dir task
+      Work.execute ~jobs prefix work_dir work_dir task
       >>= fun result -> return (task, result)
     )
     >>= fun job_results ->

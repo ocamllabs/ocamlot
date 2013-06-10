@@ -124,12 +124,8 @@ let index idx content update renderer =
   Hashtbl.replace idx.index uri r;
   r
 
-let create_index generate_uri curl =
-  let size = 1 + (2 * (List.length curl)) in
-  let idx = { index=Hashtbl.create size; generate_uri } in
-  List.iter (fun (content, update, renderer) ->
-    ignore (index idx content update renderer)
-  ) curl;
+let create_index generate_uri =
+  let idx = { index=Hashtbl.create 10; generate_uri } in
   idx
 
 let remove uri {index} =
@@ -140,7 +136,7 @@ let remove uri {index} =
 let insert {index} r =
   Hashtbl.replace index r.uri r
 
-let to_list {index} =
+let index_to_list {index} =
   Hashtbl.fold (fun _ v l -> v::l) index []
 
 let find {index} uri =
@@ -155,6 +151,9 @@ let archive a freeze r =
     updates;
     updated = (fun _ -> ());
   }
+
+let archive_to_list {archive} =
+  Hashtbl.fold (fun _ v l -> v::l) archive []
 
 let create_archive rfl =
   let a = { archive=Hashtbl.create (List.length rfl); } in

@@ -200,21 +200,10 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
 
   let opam_fail info exn =
     let duration = Time.(elapsed start (now ())) in
-    let err,out = Repo.(match exn with
-      | ProcessError (Unix.WEXITED code, r) ->
-          Printf.sprintf "OCAMLOT \"%s %s\" failed (%d) in %s\n%s\n"
-            r.r_cmd (String.concat " " r.r_args) code
-            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
-      | ProcessError (Unix.WSTOPPED signum, r)
-      | ProcessError (Unix.WSIGNALED signum, r) ->
-          Printf.sprintf "OCAMLOT \"%s %s\" terminated by signal %d in %s\n%s\n"
-            r.r_cmd (String.concat " " r.r_args) signum
-            (Time.duration_to_string duration) r.r_stderr, r.r_stdout
-      | exn ->
-          Printf.sprintf "OCAMLOT opam task terminated by \"%s\" in %s\n"
-            (Printexc.to_string exn)
-            (Time.duration_to_string duration), ""
-    ) in
+    let err,out = Repo.process_error
+      (Printf.sprintf "After %s Opam_task.run"
+         (Time.duration_to_string duration))
+      exn in
     (* clean up opam-install *)
     Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
     >>= fun _ ->

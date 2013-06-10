@@ -15,7 +15,10 @@
  *
  *)
 
+open Lwt
 open Ocamlot
+
+let task_subpath = "task"
 
 let rec update_goal_subgoal goal = function
   | New_task _
@@ -23,11 +26,11 @@ let rec update_goal_subgoal goal = function
   | New_subgoal _ ->
       { goal with stream=Lwt_stream.choose
           (goal.queue::(List.map (fun g -> (Resource.content g).stream)
-                          (Resource.to_list goal.subgoals))) }
+                          (Resource.index_to_list goal.subgoals))) }
   | Update_subgoal (_,subgoal_event) ->
       update_goal_subgoal goal subgoal_event
 
-let update_goal goal = function
+let update_goal ~on_complete goal = function
   | New_task tr -> goal.enqueue tr; goal
   | Update_task (uri, Worker (wid, Accept))
   | Update_task (uri, Worker (wid, Check_in)) -> goal
@@ -38,7 +41,9 @@ let update_goal goal = function
       goal
   | Update_task (uri, Worker (_, (Complete _)))
   | Update_task (uri, Cancel _) ->
-      Resource.archive goal.completed fst (Resource.find goal.tasks uri);
+      let tr = Resource.remove uri goal.tasks in
+      Resource.archive goal.completed fst tr;
+      async (on_complete tr);
       goal
   | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
@@ -49,14 +54,15 @@ module Table = struct
   let create rowfn colfn els =
     let t = Hashtbl.create 10 in
     List.iter
-      (fun el ->
-        let row = rowfn el in
-        let cols =
-          try Hashtbl.find t row
-          with Not_found -> Hashtbl.create 10
-        in
-        Hashtbl.replace t row cols;
-        Hashtbl.add cols (colfn el) el
+      (fun el -> match rowfn el with
+        | Some row ->
+            let cols =
+              try Hashtbl.find t row
+              with Not_found -> Hashtbl.create 10
+            in
+            Hashtbl.replace t row cols;
+            Hashtbl.add cols (colfn el) el
+        | None -> ()
       ) els;
     t
 
@@ -74,15 +80,16 @@ module Table = struct
 
   let rows tbl =
     let cols = columns tbl in
-    Hashtbl.fold (fun r ct l ->
-      (r, List.map (Hashtbl.find_all ct) cols)::l
-    ) tbl []
+    List.sort (fun (x,_) (y,_) -> String.compare x y)
+      (Hashtbl.fold (fun r ct l ->
+        (r, List.map (Hashtbl.find_all ct) cols)::l
+       ) tbl [])
 end
 
 let goal_renderer parent_title parent_uri =
   let render_html event =
     let render_tasks_table trl =
-      let opam_task_of_tr tr = match fst (Resource.content tr) with
+      let opam_task_of_tr tr = match Resource.content tr with
         | { job = Opam ot } -> ot
       in
       let simple_opam_tasks, other_tasks = List.partition (fun tr ->
@@ -93,7 +100,8 @@ let goal_renderer parent_title parent_uri =
       let tbl = Table.create
         Opam_task.(fun tr ->
           match opam_task_of_tr tr with
-            | { packages = pkg::_ } -> pkg)
+            | { packages = pkg::_ } -> Some pkg
+            | { packages = [] } -> None)
         Opam_task.(fun tr ->
           match opam_task_of_tr tr with
             | { target } -> string_of_target target)
@@ -101,7 +109,7 @@ let goal_renderer parent_title parent_uri =
       in
       let task_cell trl =
         let cell_link tr =
-          let (task, _) = Resource.content tr in
+          let task = Resource.content tr in
           let task_state = match snd (List.hd task.log) with
             | Completed (_, { Result.status = Result.Passed }) -> "PASSED"
             | Completed (_, { Result.status = Result.Failed }) -> "FAILED"
@@ -136,7 +144,7 @@ let goal_renderer parent_title parent_uri =
         then "<ul>"^
           (String.concat "\n"
              (List.map (fun tr ->
-               let (task, _) = Resource.content tr in
+               let task = Resource.content tr in
                let tm, status = List.hd task.log in
                Printf.sprintf "<li><a href='%s'>%s (%s) : %s</a></li>"
                  (Uri.to_string (Resource.uri tr))
@@ -158,9 +166,15 @@ let goal_renderer parent_title parent_uri =
       "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><p>%s</p>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
       Ocamlot.style
       goal.title title goal.title goal.descr
-      (render_tasks_table (Resource.to_list goal.tasks))
+      (render_tasks_table
+         (List.rev_append
+            Resource.(archive_to_list
+                        (create_archive
+                           (List.map (fun r -> (r,fst))
+                              (index_to_list goal.tasks))))
+            (Resource.archive_to_list goal.completed)))
       (String.concat "\n" (List.rev_map render_subgoal
-                             (Resource.to_list goal.subgoals)))
+                             (Resource.index_to_list goal.subgoals)))
       (Uri.to_string parent_uri) parent_title
     in Resource.(match event with
       | Create (goal, r) -> page goal
@@ -180,10 +194,62 @@ let lift_subgoal_to_goal = Resource.(function
   | Update (d, r) -> Update_subgoal (uri r, d)
 )
 
-let new_goal t_resource goal =
+let max_task_record_id task_records =
+  List.fold_left (fun x (id,_) -> max (int_of_string id) x) 0 task_records
+
+(* TODO: DO *)
+let read_tasks path = return []
+
+let write_task dir tr =
+  let uri = Resource.uri tr in
+  let uri_str = Uri.to_string uri in
+  let task_id = List.hd (List.rev Re_str.(split (regexp_string "/") uri_str)) in
+  let (task,_) = Resource.content tr in
+  (match List.hd task.Ocamlot.log with
+    | (_,Completed (_,r)) -> return r
+    | _ -> fail (Failure "Goal.write_task on uncompleted task")
+  )
+  >>= fun result ->
+  let message = Printf.sprintf "%s %s\n\n%s"
+    Result.(string_of_status (get_status result))
+    (string_of_job task.job)
+    (Uri.path uri) in
+  let sexp = sexp_of_task task in
+  let buf = Sexplib.Sexp.to_string sexp in
+  let filename = Filename.(concat (concat dir task_subpath) task_id) in
+  catch (fun () ->
+    Lwt_io.(with_file ~mode:output filename (fun oc -> Lwt_io.write oc buf))
+    >>= fun () ->
+    Repo.add ~path:filename
+    >>= fun dir ->
+    Repo.commit ~dir ~message
+    (*>>= fun dir ->
+      Repo.push ~dir*)
+    >>= fun _ ->
+    return ()
+  ) (Repo.die "Goal.write_task")
+
+(* TODO: set difference *)
+let missing_tasks user repo targets task_records =
+  let branch = "master" in
+  let repo_url = Uri.of_string
+    (Printf.sprintf "git://github.com/%s/%s.git" user repo) in
+  let work_dir = Filename.(concat (get_temp_dir_name ()) "ocamlotd") in
+  let repo = Repo.({
+    repo = { url = Uri.of_string ""; repo_url = URL repo_url; };
+    reference = Ref branch;
+    label = Printf.sprintf "%s/%s:%s" user repo branch;
+  }) in
+  catch (fun () ->
+    Opam_repo.packages_of_repo work_dir repo
+    >>= fun packages ->
+    return Opam_task.(tasks_of_packages targets Build [repo] packages)
+  ) (Repo.die "Goal.missing_tasks")
+
+let new_goal t_resource goal on_complete =
   let t = Resource.content t_resource in
   let goal_resource = Resource.index t.goals
-    goal update_goal
+    goal (update_goal ~on_complete)
     (goal_renderer Ocamlot.title (Resource.uri t_resource)) in
   Resource.bubble goal_resource t_resource lift_goal_to_t;
   goal_resource
@@ -191,7 +257,7 @@ let new_goal t_resource goal =
 let new_subgoal goal_resource subgoal =
   let goal = Resource.content goal_resource in
   let subgoal_resource = Resource.index goal.subgoals
-    subgoal update_goal
+    subgoal (update_goal ~on_complete:(fun _ () -> return ()))
     (goal_renderer goal.Ocamlot.title (Resource.uri goal_resource)) in
   Resource.bubble subgoal_resource goal_resource lift_subgoal_to_goal;
   subgoal_resource
@@ -201,7 +267,7 @@ let generate_subgoal_uri base subgoal =
 
 let generate_task_uri base genfn task =
   Uri.(resolve "" base
-         (of_string (Printf.sprintf "task/%d" (genfn ()))))
+         (of_string (Printf.sprintf "%s/%d" task_subpath (genfn ()))))
 
 let subresource_base uri =
   let path = Uri.path uri in
@@ -212,23 +278,25 @@ let base_of_resource_slug resource slug =
   let base = subresource_base (Resource.uri resource) in
   Uri.(resolve "" base (of_string (slug^"/")))
 
-let make_integration t_resource ~title ~descr ~slug =
+let make_integration t_resource ~title ~descr ~slug ~min_id ~goal_state_path =
   let base = base_of_resource_slug t_resource slug in
   let queue, enqueue = Lwt_stream.create () in
-  let task_mint = ref 0 in
+  let task_mint = ref min_id in
   let new_task_id = mint_id task_mint in
   let integration = {
     slug;
     title;
     descr;
-    subgoals=Resource.create_index (generate_subgoal_uri base) [];
+    subgoals=Resource.create_index (generate_subgoal_uri base);
     completed=Resource.create_archive [];
-    tasks=Resource.create_index (generate_task_uri base new_task_id) [];
+    tasks=Resource.create_index (generate_task_uri base new_task_id);
     queue;
     enqueue=(fun task_resource -> enqueue (Some task_resource));
     stream=queue;
   } in
+  Util.mkdir_p (Filename.concat goal_state_path task_subpath) 0o700;
   new_goal t_resource integration
+    (fun tr () -> write_task goal_state_path tr)
 
 let make_pull integration_gr ~title ~descr ~slug =
   let base = base_of_resource_slug integration_gr slug in
@@ -239,9 +307,9 @@ let make_pull integration_gr ~title ~descr ~slug =
     slug;
     title;
     descr;
-    subgoals=Resource.create_index (generate_subgoal_uri base) [];
+    subgoals=Resource.create_index (generate_subgoal_uri base);
     completed=Resource.create_archive [];
-    tasks=Resource.create_index (generate_task_uri base new_task_id) [];
+    tasks=Resource.create_index (generate_task_uri base new_task_id);
     queue;
     enqueue=(fun task_resource -> enqueue (Some task_resource));
     stream=queue;

@@ -89,12 +89,9 @@ let try_infer_packages base_ref_str head_ref_str merge_dir =
         ) !mod_files in
         fail (NonPackageUpdate non_package_updates)
 
-(* TODO: clean-up fs *)
 let packages_of_diff prefix work_dir diff =
   let prefix = prefix^"-merge" in
-  let tmp_name = make_temp_dir ~root_dir:work_dir ~prefix in
-  let dir = Filename.concat tmp_name "opam-repository" in
-  Unix.mkdir dir 0o700;
+  let dir = make_temp_dir ~root_dir:work_dir ~prefix in
   try_collapse ~dir diff
   >>= fun dir ->
   let head = (List.hd diff).reference in
@@ -102,3 +99,22 @@ let packages_of_diff prefix work_dir diff =
   >>= fun base ->
   update_refs ~dir [base]
   >>= try_infer_packages (string_of_reference head) (string_of_reference base)
+  >>= fun packages ->
+  (* clean-up *)
+  Repo.run_command ~cwd:work_dir [ "rm" ; "-rf" ; dir ]
+  >>= fun _ -> return packages
+
+let packages_of_repo root_dir branch =
+  let prefix = "opam-repo" in
+  let dir = make_temp_dir ~root_dir ~prefix in
+  clone_repo ~dir ~commit:branch
+  >>= fun dir ->
+  let listing_stream = Lwt_unix.files_of_directory
+    (Filename.concat dir "packages") in
+  Lwt_stream.fold (fun pkgname l ->
+    if pkgname <> "." && pkgname <> ".." then pkgname::l else l
+  ) listing_stream []
+  >>= fun packages ->
+  (* clean-up *)
+  Repo.run_command ~cwd:root_dir [ "rm" ; "-rf" ; dir ]
+  >>= fun _ -> return packages

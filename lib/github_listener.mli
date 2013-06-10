@@ -21,9 +21,9 @@ exception TokenMissing of (Github_cookie_jar.t * string)
 
 val github : unit Github.Monad.t
 
-val make_listener : Ocamlot.t_resource -> t Lwt.t
+val make_listener : Ocamlot.t_resource -> Opam_task.target list ->  t Lwt.t
 
-val attach : t -> user:string -> repo:string -> unit Lwt.t
+val attach : t -> user:string -> repo:string -> Ocamlot.goal_resource -> unit Lwt.t
 
 val service :
   t ->

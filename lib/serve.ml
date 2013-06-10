@@ -19,9 +19,26 @@ open Printf
 open Lwt
 
 let watch_list = [
-  "ocamlot", "opam-repository";
+(*  "ocamlot", "opam-repository"; *)
   "ocamlot-dev", "opam-repository";
 ]
+
+let targets = Opam_task.(Host.([
+(*  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "3.12.1";
+                 c_build = ""; }; }; *)
+  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "4.00.1";
+                 c_build = ""; }; };
+  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "4.01.0";
+                 c_build = ""; }; };
+]))
+
+let state_path = Filename.concat (Unix.getcwd ()) Config.state_path
 
 let forever base port =
   let host = match Uri.host base with None -> "" | Some host -> host in
@@ -36,19 +53,53 @@ let forever base port =
     ~base ocamlot in
 
   let ocamlot_server_later =
-    Github_listener.make_listener ocamlot
+    Github_listener.make_listener ocamlot targets
     >>= fun gh_listener ->
     let gh_event_service = Github_listener.service gh_listener
       (Http_server.service "GitHub Listener") in
 
     let http_server = Http_server.make_server host port in
+
+    Lwt_list.map_p (fun (user, repo) ->
+      let name = user^"/"^repo in
+      let slug = "github/"^name in
+      let goal_state_path = Filename.concat state_path slug in
+      let resource = Goal.make_integration ocamlot
+        ~title:slug
+        ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
+        ~slug
+        ~min_id:(Goal.max_task_record_id [])
+        ~goal_state_path
+      in
+
+      let goal = Resource.content resource in
+
+      Goal.read_tasks goal_state_path
+      >>= fun repo_trs ->
+
+      Goal.missing_tasks user repo targets repo_trs
+      >>= fun tasks ->
+      List.iter (fun task ->
+        ignore (Ocamlot.queue_job resource (Ocamlot.Opam task));
+      ) tasks;
+
+      List.iter (fun (uri,task) ->
+        Resource.archive goal.Ocamlot.completed fst
+          (Resource.create uri (task,()) (fun t _ -> t)
+             (Ocamlot.task_renderer resource));
+      ) repo_trs;
+
+      return (user, repo, resource)
+    ) watch_list
+    >>= fun watch_list ->
+
     let gh_http_server = Http_server.register_service http_server
       Github_listener.(
         gh_event_service
           ~startup:(List.map
-                      (fun (user, repo) ->
+                      (fun (user, repo, resource) ->
                         catch (fun () ->
-                          attach gh_listener ~user ~repo
+                          attach gh_listener ~user ~repo resource
                         ) (function
                           | TokenMissing (jar,name) ->
                               eprintf "Jar path: %s\n%!"

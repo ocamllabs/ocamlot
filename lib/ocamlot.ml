@@ -33,7 +33,7 @@ module Header  = Cohttp.Header
 type engagement = Time.t
 type history = engagement list
 
-type worker_id = int
+type worker_id = int with sexp
 
 type worker_message =
   | Refuse of string
@@ -54,15 +54,17 @@ type task_event =
   | Timed_out of worker_id * Time.duration
   | Cancelled of string
   | Completed of worker_id * Result.t
+with sexp
 
-type task_log = (Time.t * task_event) list
+type task_log = (Time.t * task_event) list with sexp
 type job = Opam of Opam_task.t with sexp
 type task = {
   log : task_log;
   host : Host.t;
   job : job;
-}
+} with sexp
 type task_offer = Uri.t * job with sexp
+type task_record = string * task with sexp
 
 type task_action =
   | Worker of worker_id * worker_message
@@ -321,7 +323,7 @@ let rec update_t_goal t = function
         outstanding = Lwt_stream.choose
           (List.map
              (fun g -> (Resource.content g).stream)
-             (Resource.to_list t.goals));
+             (Resource.index_to_list t.goals));
       }
   | Update_task (_,_) -> t
   | Update_subgoal (_,subgoal_event) -> update_t_goal t subgoal_event
@@ -355,13 +357,15 @@ let t_renderer =
       "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p><p>Assigned workers: %d</p></body></html>"
       style
       title title
-      (String.concat "\n" (List.rev_map goal (Resource.to_list t.goals)))
-      (String.concat "\n" (List.rev_map worker (Resource.to_list t.workers)))
+      (String.concat "\n"
+         (List.rev_map goal (Resource.index_to_list t.goals)))
+      (String.concat "\n"
+         (List.rev_map worker (Resource.index_to_list t.workers)))
       (Lwt_sequence.length t.idle)
       (List.length (List.filter (fun wr -> match Resource.content wr with
         | { assignment = Some _ } -> true
         | _ -> false
-       ) (Resource.to_list t.workers)))
+       ) (Resource.index_to_list t.workers)))
     in Resource.(match event with
       | Create (t, r) -> page t
       | Update (_, r) -> page (content r)
@@ -379,14 +383,14 @@ let make ~base =
   let generate_goal_uri goal =
     Uri.(resolve "" base (of_string goal.slug))
   in
-  let goals = Resource.create_index generate_goal_uri [] in
+  let goals = Resource.create_index generate_goal_uri in
   let resources = Hashtbl.create 5 in
   let t = {
     resources;
     goals;
     outstanding = queue;
     task_table = Hashtbl.create 10;
-    workers = Resource.create_index generate_worker_uri [];
+    workers = Resource.create_index generate_worker_uri;
     idle = Lwt_sequence.create ();
   } in
   let t_resource = Resource.create base t update_t t_renderer in
