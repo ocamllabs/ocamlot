@@ -96,9 +96,10 @@ let forever base port =
       List.iter (fun (tid,task) ->
         let uri = Uri.resolve "" base
           (Uri.of_string (Filename.concat Goal.task_subpath tid)) in
-        Resource.archive goal.Ocamlot.completed fst
-          (Resource.create uri (task,()) (fun t _ -> t)
-             (Ocamlot.task_renderer resource));
+        let tr = Resource.create uri (task,()) (fun t _ -> t)
+          (Ocamlot.task_renderer resource) in
+        Resource.archive goal.Ocamlot.completed fst tr;
+        Ocamlot.register_resource (Resource.content ocamlot) tr;
       ) repo_trs;
 
       return (user, repo, resource)

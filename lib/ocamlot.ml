@@ -312,11 +312,13 @@ let queue_job goal_resource job href =
   Resource.bubble task_resource goal_resource lift_task_to_goal;
   task_resource
 
+let register_resource t r =
+  Hashtbl.replace t.resources (Resource.uri r) (Resource.represent r)
+
 let rec update_t_goal t = function
   | New_task tr ->
-      let open Resource in
-      Hashtbl.replace t.resources (uri tr) (represent tr);
-      Hashtbl.replace t.task_table (uri tr) tr;
+      register_resource t tr;
+      Hashtbl.replace t.task_table (Resource.uri tr) tr;
       t
   | New_subgoal gr ->
       let open Resource in
