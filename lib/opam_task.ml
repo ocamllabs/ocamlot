@@ -75,13 +75,13 @@ let basic_env ?(path=[]) home opam_dir =
     "PATH",path^(Unix.getenv "PATH");
   ]
 
-let ocamlc_path ?env cwd =
+let which cmd ?env cwd =
   let env = match env with None -> None | Some e -> Some (make_env e) in
   Repo.run_command ?env ~cwd
-    [ "which" ; ocamlc ]
-  >>= fun { Repo.r_stdout } ->
-  let which_ocamlc = Util.strip r_stdout in
-  return which_ocamlc
+    [ "which" ; cmd ]
+  >>= fun { Repo.r_stdout } -> return (Util.strip r_stdout)
+
+let ocamlc_path = which ocamlc
 
 let version_patt = Re.(seq [
   bos;
@@ -251,10 +251,18 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
     >>= fun () ->
     opam_env ~path tmp_name opam_root
     >>= fun env ->
+    Repo.run_command ~env:(make_env env) ~cwd:tmp_name
+      [ "opam" ; "--git-version" ; ]
+    >>= fun { Repo.r_stdout } ->
+    let opam_version = Util.strip r_stdout in
+    which "ocamlfind" ~env tmp_name
+    >>= fun ocamlfind_path ->
     ocamlc_path ~env ocaml_dir
     >>= compiler_of_path
     >>= fun compiler ->
     let info = "Compiler: "^(string_of_compiler compiler)^"\n" in
+    let info = info^"OPAM: "^opam_version^"\n" in
+    let info = info^"which ocamlfind: "^ocamlfind_path^"\n" in
     let info = List.fold_left (fun s (k,v) -> s^k^" = "^v^"\n") info env in
 
     let env = make_env env in
