@@ -198,15 +198,21 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
   let opam_root = Filename.concat tmp_name "opam-install" in
   let { c_version } = target.compiler in
 
+  let clean_up () =
+    Repo.run_commands ~cwd:tmp_name [
+      [ "rm"; "-rf"; "opam-install" ];
+      [ "rm"; "-rf"; "opam-repository" ];
+    ] >>= fun _ -> return ()
+  in
+
   let opam_fail info exn =
     let duration = Time.(elapsed start (now ())) in
     let err,out = Repo.process_error
       (Printf.sprintf "After %s Opam_task.run"
          (Time.duration_to_string duration))
       exn in
-    (* clean up opam-install *)
-    Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
-    >>= fun _ ->
+    clean_up ()
+    >>= fun () ->
     return Result.({ status=Failed; duration;
                      output={ err; out; info; };
                    })
@@ -277,8 +283,8 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
       let facts = Printf.sprintf "OCAMLOT \"opam install %s\" succeeded in %s\n"
         (String.concat " " pkgs)
         (Time.duration_to_string duration) in
-      Repo.run_command ~cwd:tmp_name [ "rm"; "-rf"; "opam-install" ]
-      >>= fun _ ->
+      clean_up ()
+      >>= fun () ->
       return Result.({ status=Passed;
                        duration;
                        output={
