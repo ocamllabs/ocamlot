@@ -18,10 +18,11 @@
 open Printf
 open Lwt
 
-let watch_list = [
-(*  "ocamlot", "opam-repository"; *)
-  "ocamlot-dev", "opam-repository";
-]
+type policy = {
+  listen : bool;
+  comprehensive : bool;
+  targets : Opam_task.target list;
+}
 
 let targets = Opam_task.(Host.([
 (*  { host = { os = Linux;
@@ -38,6 +39,14 @@ let targets = Opam_task.(Host.([
                  c_build = ""; }; };
 ]))
 
+let watch_list = [
+(*  "ocamlot", "opam-repository"; *)
+  ("ocamlot-dev", "opam-repository"), {
+    listen=true; comprehensive=false; targets; };
+  ("OCamlPro", "opam-repository"), {
+    listen=false; comprehensive=true; targets; };
+]
+
 let state_path = Filename.concat (Unix.getcwd ()) Config.state_path
 
 let forever base port =
@@ -53,14 +62,14 @@ let forever base port =
     ~base ocamlot in
 
   let ocamlot_server_later =
-    Github_listener.make_listener ocamlot targets
+    Github_listener.make_listener ocamlot
     >>= fun gh_listener ->
     let gh_event_service = Github_listener.service gh_listener
       (Http_server.service "GitHub Listener") in
 
     let http_server = Http_server.make_server host port in
 
-    Lwt_list.map_p (fun (user, repo) ->
+    Lwt_list.map_p (fun ((user, repo), policy) ->
       let name = user^"/"^repo in
       let slug = "github/"^name in
       let goal_state_path = Filename.concat state_path slug in
@@ -79,7 +88,9 @@ let forever base port =
       let goal = Resource.content resource in
       let base = Goal.subresource_base (Resource.uri resource) in
 
-      Goal.missing_tasks user repo targets repo_trs
+      (if policy.comprehensive
+       then Goal.missing_tasks user repo policy.targets repo_trs
+       else return [])
       >>= fun tasks ->
       List.iter (function
         | { Opam_task.packages = pkg::_ } as task ->
@@ -102,29 +113,32 @@ let forever base port =
         Ocamlot.register_resource (Resource.content ocamlot) tr;
       ) repo_trs;
 
-      return (user, repo, resource)
+      return ((user, repo), policy, resource)
     ) watch_list
     >>= fun watch_list ->
 
+    let startup = List.map
+      (fun ((user, repo), policy, resource) ->
+        catch (fun () ->
+          if policy.listen
+          then Github_listener.attach gh_listener ~user ~repo
+            policy.targets resource
+          else return ()
+        ) (function
+          | Github_listener.TokenMissing (jar,name) ->
+              eprintf "Jar path: %s\n%!"
+                (Github_cookie_jar.jar_path jar);
+              eprintf "GITHUB TOKEN MISSING: %s\nQuitting\n%!" name;
+              exit 1
+          | exn ->
+              eprintf "GH Repo Attachment Error: %s\nQuitting\n%!"
+                (Printexc.to_string exn);
+              exit 1
+        )
+      ) watch_list in
+
     let gh_http_server = Http_server.register_service http_server
-      Github_listener.(
-        gh_event_service
-          ~startup:(List.map
-                      (fun (user, repo, resource) ->
-                        catch (fun () ->
-                          attach gh_listener ~user ~repo resource
-                        ) (function
-                          | TokenMissing (jar,name) ->
-                              eprintf "Jar path: %s\n%!"
-                                (Github_cookie_jar.jar_path jar);
-                              eprintf "GITHUB TOKEN MISSING: %s\nQuitting\n%!" name;
-                              exit 1
-                          | exn ->
-                              eprintf "GH Repo Attachment Error: %s\nQuitting\n%!"
-                                (Printexc.to_string exn);
-                              exit 1
-                        )
-                      ) watch_list)) in
+      (gh_event_service ~startup) in
     let gh_event_server = Http_server.register_service
       gh_http_server browser_listener in
     return (Http_server.register_service

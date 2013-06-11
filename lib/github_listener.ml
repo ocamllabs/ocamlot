@@ -32,7 +32,6 @@ type t = {
   t : Ocamlot.t_resource;
   registry : (string, Github_hook.endpoint) Hashtbl.t;
   jar : Jar.t;
-  targets : Opam_task.target list;
 }
 
 exception TokenMissing of (Jar.t * string)
@@ -91,7 +90,7 @@ let scan targets endpoint gh_repo_resource =
                    (Uri.to_string (Resource.uri pull_goal))))
   )
 
-let attach listener ~user ~repo gh_repo_resource =
+let attach listener ~user ~repo targets gh_repo_resource =
   let name = user^"/"^repo in
   let uri = Resource.uri gh_repo_resource in
   Jar.get listener.jar ~name
@@ -127,13 +126,13 @@ let attach listener ~user ~repo gh_repo_resource =
                 (github_error_str ~user ~repo);
               return ()
           | {status=Connected} ->
-              scan listener.targets endpoint gh_repo_resource
+              scan targets endpoint gh_repo_resource
         )
 
-let make_listener t targets =
+let make_listener t =
   Jar.init ()
   >>= fun jar -> return {
-    t; registry = Hashtbl.create 10; jar; targets;
+    t; registry = Hashtbl.create 10; jar;
   }
 
 let service {t; registry} service_fn =
