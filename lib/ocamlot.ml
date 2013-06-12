@@ -200,20 +200,30 @@ let update_worker worker action = match action with
       end
 let worker_renderer =
   let render_html event =
-    let page worker = Printf.sprintf
-      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>Knight %d : %s</title></head><body><h1>Knight %d</h1><p>Last transmission: %s</p><p>%s</p><p>Present task assignment: %s</p><p>Completed <strong>%d</strong> tasks</p></body></html>"
-      style
-      worker.worker_id title worker.worker_id
-      (Time.to_string worker.last_request)
-      (string_of_worker_env worker.worker_env)
-      (match worker.assignment with None -> "idle"
+    let page worker =
+      let assignment = match worker.assignment with
+        | None -> <:html<idle>>
         | Some tr ->
             let (task,_) = Resource.content tr in
-            Printf.sprintf "<a href='%s'>%s</a>"
-              (Uri.to_string (Resource.uri tr))
-              (string_of_job task.job))
-      (List.length worker.finished)
-    in Resource.(match event with
+            let href = Uri.to_string (Resource.uri tr) in
+            let descr = string_of_job task.job in
+            <:html<<a href="$str:href$">$str:descr$</a> >> in
+      Cow.Html.to_string <:html<
+        <html>
+        <head>
+          <link rel='stylesheet' type='text/css' href="$str:style$"/>
+          <title>Knight $int:worker.worker_id$ : $str:title$</title>
+        </head>
+        <body>
+          <h1>Knight $int:worker.worker_id$</h1>
+          <p>Last transmission: $str:Time.to_string worker.last_request$</p>
+          <p>$str:string_of_worker_env worker.worker_env$</p>
+          <p>Present task assignment: $assignment$</p>
+          <p>Completed <strong>$int:List.length worker.finished$</strong> tasks</p>
+        </body>
+        </html>
+      >> in
+    Resource.(match event with
       | Create (worker, r) -> page worker
       | Update (worker_action, r) -> page (content r)
     ) in
