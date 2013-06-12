@@ -253,11 +253,14 @@ let write_task dir tr =
   catch (fun () ->
     Lwt_io.(with_file ~mode:output filename (fun oc -> Lwt_io.write oc buf))
     >>= fun () ->
-    Repo.add ~path:filename
-    >>= fun dir ->
-    Repo.commit ~dir ~message
-    (*>>= fun dir ->
-      Repo.push ~dir*)
+    (* TODO: handle exceptions *)
+    Lwt_mutex.with_lock Ocamlot.git_state_lock (fun () ->
+      Repo.add ~path:filename
+      >>= fun dir ->
+      Repo.commit ~dir ~message
+      (*>>= fun dir ->
+        Repo.push ~dir*)
+    )
     >>= fun _ ->
     return ()
   ) (Repo.die "Goal.write_task")

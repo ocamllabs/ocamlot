@@ -126,6 +126,8 @@ let title = "ocamlot"
 let worker_id_cookie = "worker_id"
 let worker_timeout = 30.
 
+let git_state_lock = Lwt_mutex.create ()
+
 let mint_id mint () = let id = !mint in incr mint; id
 let worker_mint = ref 0
 let new_worker_id = mint_id worker_mint
