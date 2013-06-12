@@ -146,7 +146,7 @@ let opam_env ~path home opam_dir =
     [ "opam" ; "config" ; "env" ]
   >>= fun { Repo.r_stdout } ->
   let env = extract_env r_stdout 0 [] in
-  return ((List.remove_assoc "PATH" basic)@env)
+  return ((List.remove_assoc "OPAMROOT" (List.remove_assoc "PATH" basic))@env)
 
 let initialize_opam ~env ~cwd ~jobs =
   Repo.run_command ~env ~cwd
@@ -240,7 +240,7 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
     let merge_name = Filename.concat tmp_name "opam-repository" in
     Unix.mkdir merge_name 0o700;
     let set_opam_repo env merge_name =
-      add_opam_repository ~env ~cwd:merge_name merge_name merge_name
+      add_opam_repository ~env ~cwd:merge_name "ocamlot" merge_name
       >>= fun _ ->
       remove_opam_repository ~env ~cwd:merge_name "default"
       >>= fun _ ->
