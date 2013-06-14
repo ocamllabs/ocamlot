@@ -46,7 +46,7 @@ let to_html { status; duration; output } =
     | Failed -> "failed"
   in <:html<
   <div class='summary'>
-    <span class="status $str:status_class$">$str:string_of_status status$</span>
+    <span class=$str:"status" ^ status_class$>$str:string_of_status status$</span>
     in
     <span class='duration'>$str:Time.duration_to_string duration$</span>
   </div>
