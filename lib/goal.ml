@@ -122,7 +122,7 @@ let goal_renderer parent_title parent_uri =
       to_string
         (page ~title:goal.title
          <:html<
-           <p>$str:goal.descr$</p>
+           <p>$goal.descr$</p>
            $render_tasks_table
            (List.rev_append
               Resource.(archive_to_list

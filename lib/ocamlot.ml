@@ -90,7 +90,7 @@ type worker_resource = (worker, worker_action) Resource.t
 type goal = {
   slug : string;
   title : string;
-  descr : string;
+  descr : Cow.Html.t;
   subgoals : (goal, goal_action) Resource.index;
   completed : task Resource.archive;
   tasks : (task * requeue, task_action) Resource.index;

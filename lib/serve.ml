@@ -76,11 +76,13 @@ let forever base port =
 
       Goal.read_tasks goal_state_path
       >>= fun repo_trs ->
-
+      let descr = <:html<
+        The goal is to monitor and test the
+        <a href="$str:"https://github.com/"^name$">$str:name$</a>
+        package repository.
+      >> in
       let resource = Goal.make_integration ocamlot
-        ~title:slug
-        ~descr:(sprintf "The goal is to monitor and test the <a href='https://github.com/%s'>%s</a> package repository." name name)
-        ~slug
+        ~title:slug ~descr ~slug
         ~min_id:(Goal.max_task_record_id repo_trs)
         ~goal_state_path
       in

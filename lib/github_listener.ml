@@ -68,8 +68,12 @@ let scan targets endpoint gh_repo_resource =
     let gh_repo_goal = Resource.content gh_repo_resource in
     let pull_goal = Goal.make_pull gh_repo_resource
       ~title:(sprintf "%s Pull Request %d" gh_repo_goal.Ocamlot.title pull_number)
-      ~descr:(sprintf "Check %s <a href='%s'>pull request %d</a>."
-                gh_repo_goal.Ocamlot.slug pull.Github_t.pull_html_url pull_number)
+      ~descr:(<:html<
+        Check $str:gh_repo_goal.Ocamlot.slug$
+        <a href="$str:pull.Github_t.pull_html_url$">
+          pull request $int:pull_number$
+        </a>.
+        >>)
       ~slug:("pull/"^prefix)
     in
     catch (fun () ->
