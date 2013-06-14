@@ -37,6 +37,10 @@ let targets = Opam_task.(Host.([
              arch = X86_64; };
     compiler = { c_version = "4.01.0";
                  c_build = ""; }; };
+  { host = { os = Linux;
+             arch = X86_64; };
+    compiler = { c_version = "4.02.0";
+                 c_build = ""; }; };
 ]))
 
 let watch_list = [
