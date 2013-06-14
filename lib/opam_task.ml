@@ -45,6 +45,7 @@ type t = {
 
 exception TargetError of target * (compiler * string) list
 
+let bin_subpath = "bin"
 let ocamlc = "ocamlc"
 
 let string_of_action = function
@@ -219,21 +220,23 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
   in
 
   catch (fun () ->
-    ocamlc_path ~env:(basic_env tmp_name opam_root) ocaml_dir
-    >>= compiler_of_path
-    >>= fun compiler -> begin
-      if (compiler.c_version = c_version)
-      then return []
-      else
-        (list_compilers ocaml_dir "bin")
-         >>= fun compilers -> begin
-           try
-             return [snd (List.find (fun ({ c_version=v },_) -> v=c_version)
-                            compilers)
-                    ]
-           with Not_found ->
-             fail (TargetError (target, compilers))
-         end
+    list_compilers ocaml_dir bin_subpath
+    >>= fun compilers -> begin
+      try
+        return [snd (List.find (fun ({ c_version=v },_) -> v=c_version)
+                       compilers)
+               ]
+      with Not_found -> begin
+        (* maybe this task is being run ad hoc (e.g. cli) *)
+        ocamlc_path
+          ~env:(basic_env ~path:[ocaml_dir] tmp_name opam_root)
+          ocaml_dir
+        >>= compiler_of_path
+        >>= fun compiler ->
+        if (compiler.c_version = c_version)
+        then return []
+        else fail (TargetError (target, compilers))
+      end
     end
     >>= fun path ->
     let env = make_env (basic_env ~path tmp_name opam_root) in
