@@ -189,7 +189,8 @@ let remove_opam_repository ~env ~cwd name =
 
 let try_install env tmp pkgs =
   let () = Array.iter print_endline env in
-  Repo.run_command ~env ~cwd:tmp ("opam" :: "install" :: "--yes" :: pkgs)
+  Repo.run_command ~env ~cwd:tmp
+    ("opam" :: "install" :: "--verbose" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
 
 let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
