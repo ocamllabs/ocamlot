@@ -44,9 +44,16 @@ let to_html { status; duration; output } =
   let status_class = match status with
     | Passed -> "passed"
     | Failed -> "failed"
-  in
-  Printf.sprintf "<div class='summary'><span class='status %s'>%s</span> in <span class='duration'>%s</span></div>\n<span>stderr</span><pre class='stderr'>%s</pre>\n<span>stdout</span><pre class='stdout'>%s</pre>\n<span>environment</span><pre class='info'>%s</pre>"
-    status_class (string_of_status status) (Time.duration_to_string duration)
-    output.err
-    output.out
-    output.info
+  in <:html<
+  <div class='summary'>
+    <span class="status $str:status_class$">$str:string_of_status status$</span>
+    in
+    <span class='duration'>$str:Time.duration_to_string duration$</span>
+  </div>
+  <span>stderr</span>
+  <pre class='stderr'>$str:output.err$</pre>
+  <span>stdout</span>
+  <pre class='stdout'>$str:output.out$</pre>
+  <span>environment</span>
+  <pre class='info'>$str:output.info$</pre>
+  >>

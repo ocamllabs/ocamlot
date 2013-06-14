@@ -19,7 +19,7 @@ libssl
 
 OPAM Packages:
 
-oasis-mirage, cohttp, cryptokit, github, lwt, cmdliner, re, sexplib, uri
+oasis-mirage, cohttp, cryptokit, github, lwt, cmdliner, re, sexplib, uri, cow
 
 These packages are installable with `./install_deps.sh`
 
@@ -28,6 +28,8 @@ Pinned Dev packages:
 avsm/ocaml-github@master
 
 dsheets/ocaml-cohttp@magic-biscuit
+
+mirage/ocaml-cow@master
 
 ## Build
 

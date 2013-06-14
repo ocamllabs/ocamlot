@@ -122,7 +122,6 @@ type t_resource = (t, t_action) Resource.t
 
 let engagement = Time.now ()
 let sessions = Hashtbl.create 10 (* cookie -> worker URI *)
-let title = "ocamlot"
 let worker_id_cookie = "worker_id"
 let worker_timeout = 30.
 
@@ -131,8 +130,6 @@ let git_state_lock = Lwt_mutex.create ()
 let mint_id mint () = let id = !mint in incr mint; id
 let worker_mint = ref 0
 let new_worker_id = mint_id worker_mint
-
-let style = "//netdna.bootstrapcdn.com/bootswatch/2.3.1/flatly/bootstrap.min.css"
 
 let string_of_job = function
   | Opam opam_task -> "opam => "^(Opam_task.to_string opam_task)
@@ -205,24 +202,18 @@ let worker_renderer =
         | None -> <:html<idle>>
         | Some tr ->
             let (task,_) = Resource.content tr in
-            let href = Uri.to_string (Resource.uri tr) in
             let descr = string_of_job task.job in
-            <:html<<a href="$str:href$">$str:descr$</a> >> in
-      Cow.Html.to_string <:html<
-        <html>
-        <head>
-          <link rel='stylesheet' type='text/css' href="$str:style$"/>
-          <title>Knight $int:worker.worker_id$ : $str:title$</title>
-        </head>
-        <body>
-          <h1>Knight $int:worker.worker_id$</h1>
-          <p>Last transmission: $str:Time.to_string worker.last_request$</p>
-          <p>$str:string_of_worker_env worker.worker_env$</p>
-          <p>Present task assignment: $assignment$</p>
-          <p>Completed <strong>$int:List.length worker.finished$</strong> tasks</p>
-        </body>
-        </html>
-      >> in
+            <:html<<a href="$uri:Resource.uri tr$">$str:descr$</a>&>> in
+      Html.(
+        to_string
+          (page
+             ~title:(Printf.sprintf "Knight %d" worker.worker_id)
+             <:html<
+               <p>Last transmission: $str:Time.to_string worker.last_request$</p>
+               <p>$str:string_of_worker_env worker.worker_env$</p>
+               <p>Present task assignment: $assignment$</p>
+               <p>Completed <strong>$int:List.length worker.finished$</strong> tasks</p>
+           >>)) in
     Resource.(match event with
       | Create (worker, r) -> page worker
       | Update (worker_action, r) -> page (content r)
@@ -272,27 +263,28 @@ let update_task (task,rq) action =
 let task_renderer goal_resource =
   let render_html event =
     let log_event (time, event) =
-      Printf.sprintf "<li>%s at %s</li>"
-        (string_of_event event) (Time.to_string time)
+      <:html< $str:string_of_event event$ at $str:Time.to_string time$ >>
     in
     let page { href; log; job } =
       let job_descr = string_of_job job in
       let (time, event) = List.hd log in
-      Printf.sprintf
-        "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><div id='update'>%s</div><div id='status'>%s</div><div id='source'><a href='%s'>%s</a></div>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
-        style
-        job_descr title job_descr
-        (Time.to_string time)
-        (string_of_event event)
-        (Uri.to_string href) (Uri.to_string href)
-        (match event with
-          | Completed (wid, result) ->
-              Printf.sprintf "<div id='result'>%s</div>"
-                Result.(to_html result)
-          | _ -> "")
-        (String.concat "\n" (List.map log_event log))
-        (Uri.to_string (Resource.uri goal_resource))
-        (Resource.content goal_resource).title
+      let up_link = (Resource.content goal_resource).title in
+      let result = match event with
+        | Completed (wid, result) -> Some <:html<
+            <div id='result'>$Result.to_html result$</div>
+        >>
+        | _ -> None
+      in Html.(
+        to_string
+          (page ~title:job_descr
+           <:html<
+             <div id='update'>$str:Time.to_string time$</div>
+             <div id='status'>$str:string_of_event event$</div>
+             <div id='source'><a href="$uri:href$">$uri:href$</a></div>
+             $opt:result$
+             $ul (List.map log_event log)$
+             <p><a href="$uri:Resource.uri goal_resource$">$str:up_link$</a></p>
+           >>))
     in Resource.(match event with
       | Create ((task, _), r) -> page task
       | Update (_, r) -> page (fst (content r))
@@ -356,32 +348,30 @@ let t_renderer =
   let render_html event =
     let goal gr =
       let goal = Resource.content gr in
-      Printf.sprintf
-        "<li><a href='%s'>%s</a></li>"
-        (Uri.to_string (Resource.uri gr))
-        goal.title
+      <:html< <a href="$uri:Resource.uri gr$">$str:goal.title$</a> >>
     in
     let worker wr =
       let worker = Resource.content wr in
-      Printf.sprintf
-        "<li><a href='%s'>#%d %s</a></li>"
-        (Uri.to_string (Resource.uri wr))
-        worker.worker_id
-        (string_of_worker_env worker.worker_env)
+      <:html<
+        <a href="$uri:Resource.uri wr$">
+          #$int:worker.worker_id$ $str:string_of_worker_env worker.worker_env$
+        </a>
+      >>
     in
-    let page t = Printf.sprintf
-      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s</title></head><body><h1>%s</h1><ul>%s</ul><ul>%s</ul><p>Idle workers: %d</p><p>Assigned workers: %d</p></body></html>"
-      style
-      title title
-      (String.concat "\n"
-         (List.rev_map goal (Resource.index_to_list t.goals)))
-      (String.concat "\n"
-         (List.rev_map worker (Resource.index_to_list t.workers)))
-      (Lwt_sequence.length t.idle)
-      (List.length (List.filter (fun wr -> match Resource.content wr with
-        | { assignment = Some _ } -> true
-        | _ -> false
-       ) (Resource.index_to_list t.workers)))
+    let page t =
+      Html.(
+        to_string
+          (page <:html<
+           $ul (List.rev_map goal (Resource.index_to_list t.goals))$
+           $ul (List.rev_map worker (Resource.index_to_list t.workers))$
+           <p>Idle workers: $int:Lwt_sequence.length t.idle$</p>
+           <p>Assigned workers: $int:
+           List.length (List.filter (fun wr -> match Resource.content wr with
+             | { assignment = Some _ } -> true
+             | _ -> false
+           ) (Resource.index_to_list t.workers))
+           $</p>
+           >>))
     in Resource.(match event with
       | Create (t, r) -> page t
       | Update (_, r) -> page (content r)

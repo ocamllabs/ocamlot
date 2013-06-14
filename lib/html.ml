@@ -15,34 +15,89 @@
  *
  *)
 
-open Printf
+open Cow
+module HTML = Cow.Html
 
-open Cohttp
-open Github_hook
+let style = Uri.of_string "//netdna.bootstrapcdn.com/bootswatch/2.3.1/flatly/bootstrap.min.css"
 
-open Cohttp_lwt_unix
+let site_title = "ocamlot"
 
-let html_status href = function
-  | Indicated -> "<span style='color: grey'>indicated</span>"
-  | Unauthorized -> "<a href='"^href^"/authorize' style='color: red'>authorize</a>"
-  | Pending -> "<span style='color: yellow'>pending</span>"
-  | Connected -> "<span style='color: green'>connected</span>"
+module Table = struct
+  type 'a t = (string, (string, 'a) Hashtbl.t) Hashtbl.t
 
-let index registry =
-  let body = Body.body_of_string_list Github_hook.([
-    "<!DOCTYPE html><html><head><title>ocamlot</title></head><body>";
-    "<h1>ocamlot : OCaml Online Testing</h1>";
-    "<table>";
-  ]@(
-    Hashtbl.fold (fun k v a ->
-      let href = v.user ^ "/" ^ v.repo in
-      (sprintf "<tr><td><a href=\"%s\">%s / %s</a></td><td>%s</td></tr>"
-         href v.user v.repo
-         (html_status href v.status)
-      )::a
-    ) registry []
-  )@[
-    "</table>";
-    "</body></html>";
-  ]) in
-  Server.respond ~status:`OK ~body ()
+  let create rowfn colfn els =
+    let t = Hashtbl.create 10 in
+    List.iter
+      (fun el -> match rowfn el with
+        | Some row ->
+            let cols =
+              try Hashtbl.find t row
+              with Not_found -> Hashtbl.create 10
+            in
+            Hashtbl.replace t row cols;
+            Hashtbl.add cols (colfn el) el
+        | None -> ()
+      ) els;
+    t
+
+  let cell_count tbl = Hashtbl.fold
+    (fun _ v a ->
+      a + (Hashtbl.length v)
+    ) tbl 0
+
+  let columns tbl =
+    let col_set = Hashtbl.create 10 in
+    Hashtbl.iter (fun _ ct ->
+      Hashtbl.iter (fun c _ -> Hashtbl.replace col_set c ()) ct
+    ) tbl;
+    Hashtbl.fold (fun c () l -> c::l) col_set []
+
+  let rows tbl =
+    let cols = columns tbl in
+    List.sort (fun (x,_) (y,_) -> String.compare x y)
+      (Hashtbl.fold (fun r ct l ->
+        (r, List.map (Hashtbl.find_all ct) cols)::l
+       ) tbl [])
+
+  let render tbl render_cell =
+    let headers = List.map
+      (fun h -> <:html<<th>$str:h$</th>&>>) (columns tbl) in
+    let rows = List.map (fun (rl,r) ->
+      <:html<<tr><th>$str:rl$</th>$list:List.map render_cell r$</tr>&>>)
+      (rows tbl) in
+    if cell_count tbl > 0
+    then <:html<
+      <table>
+      <tr><th></th>$list:headers$</tr>
+      $list:rows$
+      </table>&>>
+    else []
+end
+
+let li x = <:html< <li>$x$</li> >>
+
+let ul lst = <:html<
+  <ul>
+    $list:List.map li lst$
+  </ul>
+>>
+
+let page ?title body =
+  let page_title, header = match title with
+    | None -> site_title, site_title
+    | Some t -> t ^ " : " ^ site_title, t
+  in
+  <:html<
+  <html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+      <link rel='stylesheet' type='text/css' href="$uri:style$"/>
+      <title>$str:page_title$</title>
+    </head>
+    <body>
+      <h1>$str:header$</h1>
+      $body$
+    </body>
+  </html>
+>>
+
+let to_string = HTML.to_string

@@ -48,44 +48,6 @@ let update_goal ~on_complete goal = function
   | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
-module Table = struct
-  type 'a t = (string, (string, 'a) Hashtbl.t) Hashtbl.t
-
-  let create rowfn colfn els =
-    let t = Hashtbl.create 10 in
-    List.iter
-      (fun el -> match rowfn el with
-        | Some row ->
-            let cols =
-              try Hashtbl.find t row
-              with Not_found -> Hashtbl.create 10
-            in
-            Hashtbl.replace t row cols;
-            Hashtbl.add cols (colfn el) el
-        | None -> ()
-      ) els;
-    t
-
-  let cell_count tbl = Hashtbl.fold
-    (fun _ v a ->
-      a + (Hashtbl.length v)
-    ) tbl 0
-
-  let columns tbl =
-    let col_set = Hashtbl.create 10 in
-    Hashtbl.iter (fun _ ct ->
-      Hashtbl.iter (fun c _ -> Hashtbl.replace col_set c ()) ct
-    ) tbl;
-    Hashtbl.fold (fun c () l -> c::l) col_set []
-
-  let rows tbl =
-    let cols = columns tbl in
-    List.sort (fun (x,_) (y,_) -> String.compare x y)
-      (Hashtbl.fold (fun r ct l ->
-        (r, List.map (Hashtbl.find_all ct) cols)::l
-       ) tbl [])
-end
-
 let goal_renderer parent_title parent_uri =
   let render_html event =
     let render_tasks_table trl =
@@ -100,23 +62,6 @@ let goal_renderer parent_title parent_uri =
           | { Opam_task.packages = [ _ ] } -> true
           | _ -> false) trl
       in
-      let tbl = Table.create
-        Opam_task.(fun tr ->
-          match opam_task_of_tr tr with
-            | { packages = pkg::_ } -> Some pkg
-            | { packages = [] } -> None)
-        target_colfn
-        simple_opam_tasks
-      in
-      let done_tbl = Table.create
-        (fun tr ->
-          let packages = (opam_task_of_tr tr).Opam_task.packages in
-          match last_event (Resource.content tr), packages with
-            | (Completed (_,_) | Started _ | Checked_in _), pkg::_ -> Some pkg
-            | _ -> None)
-        target_colfn
-        simple_opam_tasks
-      in
       let task_cell trl =
         let cell_link tr =
           let task = Resource.content tr in
@@ -126,70 +71,69 @@ let goal_renderer parent_title parent_uri =
             | Started _ | Checked_in _ -> "pending"
             | _ -> "queued"
           in
-          Printf.sprintf "<a href='%s'>%s</a>"
-            (Uri.to_string (Resource.uri tr))
-            task_state
+          <:html<<a href="$uri:Resource.uri tr$">$str:task_state$</a>&>>
         in
-        "<td>"^(match trl with
-          | [] -> ""
-          | [tr] -> cell_link tr
-          | trl -> "<ul>"^(List.fold_left (fun s tr ->
-            s^"<li>"^(cell_link tr)^"</li>\n"
-          ) "" trl)^"</ul>"
-        )^"</td>"
+        let content = match trl with
+          | [] -> None
+          | [tr] -> Some (cell_link tr)
+          | trl -> Some (Html.ul (List.map cell_link trl))
+        in
+        <:html<<td>$opt:content$</td>&>>
       in
-      let render_table tbl =
-        if Table.cell_count tbl > 0
-        then "<table><tr><th></th>"^
-          (String.concat "\n"
-             (List.map (fun h -> "<th>"^h^"</th>") (Table.columns tbl)))^"</tr>"^
-          (String.concat "\n"
-             (List.map (fun (rl,r) ->
-               "<tr><th>"^rl^"</th>"^(String.concat "\n"
-                                        (List.map task_cell r))^"</tr>")
-                (Table.rows tbl)))
-          ^"</table>"
-        else ""
+      let tbl = Html.Table.(render (create
+        Opam_task.(fun tr ->
+          match opam_task_of_tr tr with
+            | { packages = pkg::_ } -> Some pkg
+            | { packages = [] } -> None)
+        target_colfn
+        simple_opam_tasks) task_cell)
       in
-      (render_table done_tbl)
-      ^(render_table tbl)
-      ^(
-        if List.length other_tasks > 0
-        then "<ul>"^
-          (String.concat "\n"
-             (List.map (fun tr ->
-               let task = Resource.content tr in
-               let tm, status = List.hd task.log in
-               Printf.sprintf "<li><a href='%s'>%s (%s) : %s</a></li>"
-                 (Uri.to_string (Resource.uri tr))
-                 (string_of_event status)
-                 (Time.to_string tm)
-                 (string_of_job task.job)
-              ) other_tasks)
-          )^"</ul>"
-        else ""
-       )
+      let done_tbl = Html.Table.(render (create
+        (fun tr ->
+          let packages = (opam_task_of_tr tr).Opam_task.packages in
+          match last_event (Resource.content tr), packages with
+            | (Completed (_,_) | Started _ | Checked_in _), pkg::_ -> Some pkg
+            | _ -> None)
+        target_colfn
+        simple_opam_tasks) task_cell)
+      in
+      let other_task_list = Html.ul (List.map (fun tr ->
+        let task = Resource.content tr in
+        let tm, status = List.hd task.log in
+        <:html<
+        <a href="$uri:Resource.uri tr$">
+          $str:string_of_event status$ ($str:Time.to_string tm$)
+          : $str:string_of_job task.job$
+        </a>&>>
+      ) other_tasks) in
+      <:html<
+      $done_tbl$
+      $tbl$
+      $if List.length other_tasks > 0
+       then other_task_list
+       else []
+      $>>
     in
     let render_subgoal gr =
       let goal = Resource.content gr in
-      Printf.sprintf "<li><a href='%s'>%s</a></li>"
-        (Uri.to_string (Resource.uri gr))
-        goal.title
+      <:html<<a href="$uri:Resource.uri gr$">$str:goal.title$</a>&>>
     in
-    let page goal = Printf.sprintf
-      "<html><head><link rel='stylesheet' type='text/css' href='%s'/><title>%s : %s</title></head><body><h1>%s</h1><p>%s</p>%s<ul>%s</ul><p><a href='%s'>%s</a></body></html>"
-      Ocamlot.style
-      goal.title title goal.title goal.descr
-      (render_tasks_table
-         (List.rev_append
-            Resource.(archive_to_list
-                        (create_archive
-                           (List.map (fun r -> (r,fst))
-                              (index_to_list goal.tasks))))
-            (Resource.archive_to_list goal.completed)))
-      (String.concat "\n" (List.rev_map render_subgoal
-                             (Resource.index_to_list goal.subgoals)))
-      (Uri.to_string parent_uri) parent_title
+    let page goal = Html.(
+      to_string
+        (page ~title:goal.title
+         <:html<
+           <p>$str:goal.descr$</p>
+           $render_tasks_table
+           (List.rev_append
+              Resource.(archive_to_list
+                          (create_archive
+                             (List.map (fun r -> (r,fst))
+                                (index_to_list goal.tasks))))
+              (Resource.archive_to_list goal.completed))$
+           $ul (List.rev_map render_subgoal
+                  (Resource.index_to_list goal.subgoals))$
+           <p><a href="$uri:parent_uri$">$str:parent_title$</a></p>
+         >>))
     in Resource.(match event with
       | Create (goal, r) -> page goal
       | Update (goal_action, r) -> page (content r)
@@ -292,7 +236,7 @@ let new_goal t_resource goal on_complete =
   let t = Resource.content t_resource in
   let goal_resource = Resource.index t.goals
     goal (update_goal ~on_complete)
-    (goal_renderer Ocamlot.title (Resource.uri t_resource)) in
+    (goal_renderer Html.site_title (Resource.uri t_resource)) in
   Resource.bubble goal_resource t_resource lift_goal_to_t;
   goal_resource
 

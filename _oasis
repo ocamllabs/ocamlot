@@ -11,7 +11,7 @@ PostConfCommand: ./init_config.sh
 Library ocamlot
   Path: lib
   Findlibname: ocamlot
-  Modules: Github_hook, Github_listener, Http_server, Ocamlot, Resource, Ocamlot_cmd, Util, Host, Time, Config, Opam_task, Opam_repo, Repo, Result, Work, Serve, Goal
+  Modules: Github_hook, Github_listener, Http_server, Ocamlot, Resource, Ocamlot_cmd, Util, Host, Time, Config, Opam_task, Opam_repo, Repo, Result, Work, Serve, Goal, Html
   BuildDepends: lwt, uri, cohttp.lwt, sexplib, sexplib.syntax, github, re, re.str, cryptokit, cmdliner, cow, cow.syntax
 
 Executable ocamlot
