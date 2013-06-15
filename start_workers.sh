@@ -7,5 +7,5 @@ mkdir -p log
 export OPAMJOBS=1
 for i in $(seq 1 $WORKERS); do
   tmux new -d -s worker$i \
-      "$DIR/ocamlot_cmd.native work $URL 2> log/worker$i.err > log/worker$i.out"
+      "$DIR/ocamlot_cmd.native work $URL 2> log/worker$i.err | tee log/worker$i.out"
 done
