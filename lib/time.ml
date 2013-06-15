@@ -33,4 +33,5 @@ let to_string_ tm = Unix.(
 let date_to_string t = date_to_string_ (Unix.gmtime t)
 let duration_to_string t = Printf.sprintf "%.2fs" t
 let to_string t = to_string_ (Unix.gmtime t)
-let elapsed t_0 t_1 = abs_float (t_0 -. t_1)
+let elapsed t_0 t_1 = t_1 -. t_0
+let is_later dur = dur > 0.

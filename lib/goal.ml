@@ -56,7 +56,7 @@ let goal_renderer parent_title parent_uri =
       in
       let target_colfn tr = Opam_task.(match opam_task_of_tr tr with
         | { target } -> string_of_target target) in
-      let last_event task = snd (List.hd task.log) in
+      let last_event task = List.hd task.log in
       let simple_opam_tasks, other_tasks = List.partition (fun tr ->
         match opam_task_of_tr tr with
           | { Opam_task.packages = [ _ ] } -> true
@@ -66,9 +66,9 @@ let goal_renderer parent_title parent_uri =
         let cell_link tr =
           let task = Resource.content tr in
           let task_state = match last_event task with
-            | Completed (_, { Result.status = Result.Passed }) -> "PASSED"
-            | Completed (_, { Result.status = Result.Failed }) -> "FAILED"
-            | Started _ | Checked_in _ -> "pending"
+            | (_, Completed (_, { Result.status = Result.Passed })) -> "PASSED"
+            | (_, Completed (_, { Result.status = Result.Failed })) -> "FAILED"
+            | (_, Started _) | (_, Checked_in _) -> "pending"
             | _ -> "queued"
           in
           <:html<<a href="$uri:Resource.uri tr$">$str:task_state$</a>&>>
@@ -88,11 +88,21 @@ let goal_renderer parent_title parent_uri =
         target_colfn
         simple_opam_tasks) task_cell)
       in
-      let done_tbl = Html.Table.(render (create
+      let latest_tasks (_,r) (_,r') =
+        let cmp_time m tr =
+          let t_0 = fst (last_event (Resource.content tr)) in
+          if Time.(is_later (elapsed m t_0)) then t_0 else m in
+        let r_tmax = List.fold_left cmp_time Time.min (List.flatten r) in
+        let r'_tmax = List.fold_left cmp_time Time.min (List.flatten r') in
+        if Time.(is_later (elapsed r'_tmax r_tmax)) then -1
+        else if Time.(is_later (elapsed r_tmax r'_tmax)) then 1
+        else 0
+      in
+      let done_tbl = Html.Table.(render (create ~sortfn:latest_tasks
         (fun tr ->
           let packages = (opam_task_of_tr tr).Opam_task.packages in
           match last_event (Resource.content tr), packages with
-            | (Completed (_,_) | Started _ | Checked_in _), pkg::_ -> Some pkg
+            | (_, (Completed (_,_) | Started _ | Checked_in _)), pkg::_ -> Some pkg
             | _ -> None)
         target_colfn
         simple_opam_tasks) task_cell)

@@ -87,7 +87,7 @@ let run_command ?(env=[||]) ~cwd cmd_args =
   >>= fun r_stdout ->
   Lwt_io.read process#stderr
   >>= fun r_stderr ->
-  let r_duration = Time.(elapsed (now ()) time) in
+  let r_duration = Time.(elapsed time (now ())) in
   let r = {
     r_cmd = cmd;
     r_args = args;

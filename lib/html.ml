@@ -23,41 +23,44 @@ let style = Uri.of_string "//netdna.bootstrapcdn.com/bootswatch/2.3.1/flatly/boo
 let site_title = "ocamlot"
 
 module Table = struct
-  type 'a t = (string, (string, 'a) Hashtbl.t) Hashtbl.t
+  type 'a t = {
+    rc_idx : (string, (string, 'a) Hashtbl.t) Hashtbl.t;
+    sortfn : (string * 'a list list) -> (string * 'a list list) -> int;
+  }
 
-  let create rowfn colfn els =
-    let t = Hashtbl.create 10 in
+  let create ?(sortfn=fun (x,_) (y,_) -> String.compare x y) rowfn colfn els =
+    let rc_idx = Hashtbl.create 10 in
     List.iter
       (fun el -> match rowfn el with
         | Some row ->
             let cols =
-              try Hashtbl.find t row
+              try Hashtbl.find rc_idx row
               with Not_found -> Hashtbl.create 10
             in
-            Hashtbl.replace t row cols;
+            Hashtbl.replace rc_idx row cols;
             Hashtbl.add cols (colfn el) el
         | None -> ()
       ) els;
-    t
+    { rc_idx; sortfn; }
 
   let cell_count tbl = Hashtbl.fold
     (fun _ v a ->
       a + (Hashtbl.length v)
-    ) tbl 0
+    ) tbl.rc_idx 0
 
   let columns tbl =
     let col_set = Hashtbl.create 10 in
     Hashtbl.iter (fun _ ct ->
       Hashtbl.iter (fun c _ -> Hashtbl.replace col_set c ()) ct
-    ) tbl;
+    ) tbl.rc_idx;
     Hashtbl.fold (fun c () l -> c::l) col_set []
 
   let rows tbl =
     let cols = columns tbl in
-    List.sort (fun (x,_) (y,_) -> String.compare x y)
+    List.sort tbl.sortfn
       (Hashtbl.fold (fun r ct l ->
         (r, List.map (Hashtbl.find_all ct) cols)::l
-       ) tbl [])
+       ) tbl.rc_idx [])
 
   let render tbl render_cell =
     let headers = List.map
