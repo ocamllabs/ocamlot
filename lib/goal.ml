@@ -18,6 +18,8 @@
 open Lwt
 open Ocamlot
 
+type task_status = Pass | Fail | Pending | Queued
+
 let task_subpath = "task"
 
 let rec update_goal_subgoal goal = function
@@ -62,23 +64,42 @@ let goal_renderer parent_title parent_uri =
           | { Opam_task.packages = [ _ ] } -> true
           | _ -> false) trl
       in
+      let task_state task = match last_event task with
+        | (_, Completed (_, { Result.status = Result.Passed })) -> Pass
+        | (_, Completed (_, { Result.status = Result.Failed })) -> Fail
+        | (_, Started _) | (_, Checked_in _) -> Pending
+        | _ -> Queued
+      in
       let task_cell trl =
+        let cell_classes trl =
+          match List.fold_left (fun ostate tr ->
+            match ostate, task_state (Resource.content tr) with
+              | Fail, _ | _, Fail -> Fail
+              | Pending, _ | _, Pending -> Pending
+              | Queued, _ | _, Queued -> Queued
+              | Pass, _ | _, Pass -> Pass
+          ) Pass trl with
+            | Pass -> "pass"
+            | Fail -> "fail"
+            | Pending -> "pending"
+            | Queued -> "queued"
+        in
         let cell_link tr =
           let task = Resource.content tr in
-          let task_state = match last_event task with
-            | (_, Completed (_, { Result.status = Result.Passed })) -> "PASSED"
-            | (_, Completed (_, { Result.status = Result.Failed })) -> "FAILED"
-            | (_, Started _) | (_, Checked_in _) -> "pending"
-            | _ -> "queued"
+          let task_state_str = match task_state task with
+            | Pass -> "PASS"
+            | Fail -> "FAIL"
+            | Pending -> "pending"
+            | Queued -> "queued"
           in
-          <:html<<a href="$uri:Resource.uri tr$">$str:task_state$</a>&>>
+          <:html<<a href="$uri:Resource.uri tr$">$str:task_state_str$</a>&>>
         in
-        let content = match trl with
-          | [] -> None
-          | [tr] -> Some (cell_link tr)
-          | trl -> Some (Html.ul (List.map cell_link trl))
+        let classes, content = match trl with
+          | [] -> "", None
+          | [tr] -> cell_classes [tr], Some (cell_link tr)
+          | trl -> cell_classes trl, Some (Html.ul (List.map cell_link trl))
         in
-        <:html<<td>$opt:content$</td>&>>
+        <:html<<td class=$str:classes$>$opt:content$</td>&>>
       in
       let tbl = Html.Table.(render (create
         Opam_task.(fun tr ->

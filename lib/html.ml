@@ -94,6 +94,10 @@ let page ?title body =
   <html xmlns="http://www.w3.org/1999/xhtml">
     <head>
       <link rel='stylesheet' type='text/css' href="$uri:style$"/>
+      <style type='text/css'>
+         .pass { background-color: green; }
+         .fail { background-color: red; }
+      </style>
       <title>$str:page_title$</title>
     </head>
     <body>
