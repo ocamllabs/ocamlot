@@ -80,25 +80,32 @@ let run_command ?(env=[||]) ~cwd cmd_args =
   let time = Time.now () in
   Unix.chdir cwd;
   let cmd_args = Array.of_list cmd_args in
-  let process = Lwt_process.open_process_full ~env ("", cmd_args) in
-  process#status
-  >>= fun status ->
-  Lwt_io.read process#stdout
-  >>= fun r_stdout ->
-  Lwt_io.read process#stderr
-  >>= fun r_stderr ->
-  let r_duration = Time.(elapsed time (now ())) in
-  let r = {
-    r_cmd = cmd;
-    r_args = args;
-    r_env = env;
-    r_cwd = cwd;
-    r_duration;
-    r_stdout;
-    r_stderr;
-  } in match status with
-    | Unix.WEXITED 0 -> return r
-    | _ -> fail (ProcessError (status,r))
+  Lwt_process.with_process_full ~env ("", cmd_args) (fun process ->
+    let stdout = process#stdout in
+    let stderr = process#stderr in
+    (Lwt_io.resize_buffer stdout (1 lsl 16))
+    <&>
+    (Lwt_io.resize_buffer stdout (1 lsl 16))
+    >>= fun () ->
+    process#status
+    >>= fun status ->
+    Lwt_io.read stdout
+    >>= fun r_stdout ->
+    Lwt_io.read stderr
+    >>= fun r_stderr ->
+    let r_duration = Time.(elapsed time (now ())) in
+    let r = {
+      r_cmd = cmd;
+      r_args = args;
+      r_env = env;
+      r_cwd = cwd;
+      r_duration;
+      r_stdout;
+      r_stderr;
+    } in match status with
+      | Unix.WEXITED 0 -> return r
+      | _ -> fail (ProcessError (status,r))
+  )
 
 let run_commands ?(env=[||]) ~cwd =
   Lwt_list.map_s (run_command ~env ~cwd)
