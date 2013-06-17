@@ -75,24 +75,39 @@ let string_of_git = function
 let string_of_reference = function Ref h | Commit (h,_) | Copy (h,_) -> h
 
 let run_command ?(env=[||]) ~cwd cmd_args =
+  let pgsz = 1 lsl 12 in
   let cmd = List.hd cmd_args in
   let args = List.tl cmd_args in
   let time = Time.now () in
   Unix.chdir cwd;
   let cmd_args = Array.of_list cmd_args in
   Lwt_process.with_process_full ~env ("", cmd_args) (fun process ->
-    let stdout = process#stdout in
-    let stderr = process#stderr in
-    (Lwt_io.resize_buffer stdout (1 lsl 16))
-    <&>
-    (Lwt_io.resize_buffer stdout (1 lsl 16))
-    >>= fun () ->
-    process#status
+    let stdout = Lwt_io.read_lines process#stdout in
+    let stderr = Lwt_io.read_lines process#stderr in
+    let outbuf = Buffer.create pgsz in
+    let errbuf = Buffer.create pgsz in
+    let write_line buf s =
+      Buffer.add_string buf s;
+      Buffer.add_char buf '\n';
+    in
+    let read () =
+      List.iter (write_line outbuf) (Lwt_stream.get_available stdout);
+      List.iter (write_line errbuf) (Lwt_stream.get_available stderr);
+    in
+    let rec stream () = match process#state with
+      | Lwt_process.Running -> read (); Lwt_unix.yield () >>= stream
+      | Lwt_process.Exited status ->
+          read ();
+          (* tail of pipe without trailing newline *)
+          Lwt_io.read process#stdout
+          >>= fun s ->
+          Buffer.add_string outbuf s;
+          Lwt_io.read process#stderr
+          >>= fun s ->
+          Buffer.add_string errbuf s;
+          return status
+    in stream ()
     >>= fun status ->
-    Lwt_io.read stdout
-    >>= fun r_stdout ->
-    Lwt_io.read stderr
-    >>= fun r_stderr ->
     let r_duration = Time.(elapsed time (now ())) in
     let r = {
       r_cmd = cmd;
@@ -100,8 +115,8 @@ let run_command ?(env=[||]) ~cwd cmd_args =
       r_env = env;
       r_cwd = cwd;
       r_duration;
-      r_stdout;
-      r_stderr;
+      r_stdout = Buffer.contents outbuf;
+      r_stderr = Buffer.contents errbuf;
     } in match status with
       | Unix.WEXITED 0 -> return r
       | _ -> fail (ProcessError (status,r))
