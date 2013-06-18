@@ -142,4 +142,4 @@ let packages_of_repo root_dir branch =
           Hashtbl.replace sorted_libs lib r
     ) sorted_libs
   done;
-  return (List.rev !pkgl_ref)
+  return !pkgl_ref
