@@ -104,6 +104,7 @@ let packages_of_diff prefix work_dir diff =
   Repo.run_command ~cwd:work_dir [ "rm" ; "-rf" ; dir ]
   >>= fun _ -> return packages
 
+module StringSet = Set.Make(struct type t = String.t let compare = compare end)
 let packages_of_repo root_dir branch =
   let prefix = "opam-repo" in
   let dir = make_temp_dir ~root_dir ~prefix in
@@ -117,4 +118,28 @@ let packages_of_repo root_dir branch =
   >>= fun packages ->
   (* clean-up *)
   Repo.run_command ~cwd:root_dir [ "rm" ; "-rf" ; dir ]
-  >>= fun _ -> return packages
+  >>= fun _ ->
+  (* sort *)
+  let libraries = Hashtbl.create 500 in
+  let libset = List.fold_left (fun set pkg ->
+    let i = String.index pkg '.' in
+    let lib = Re_str.string_before pkg i in
+    let v = Re_str.string_after pkg i in
+    Hashtbl.add libraries lib v;
+    StringSet.add lib set
+  ) StringSet.empty packages in
+  let sorted_libs = Hashtbl.create ((Hashtbl.length libraries)/3) in
+  StringSet.iter (fun lib ->
+    Hashtbl.replace sorted_libs lib
+      (List.sort (fun a b -> compare b a) (Hashtbl.find_all libraries lib))
+  ) libset;
+  let pkgl_ref = ref [] in
+  while (Hashtbl.length sorted_libs) > 0 do
+    Hashtbl.iter (fun lib -> function
+      | [] -> Hashtbl.remove sorted_libs lib
+      | v::r ->
+          pkgl_ref := (lib^v)::!pkgl_ref;
+          Hashtbl.replace sorted_libs lib r
+    ) sorted_libs
+  done;
+  return (List.rev !pkgl_ref)
