@@ -23,7 +23,12 @@ module Body = Cohttp_lwt_body
 module Client = Cohttp_lwt_unix.Client
 module Response = Cohttp_lwt_unix.Response
 
-type env = { headers : Header.t ; work_dir : string ; ocaml_dir : string }
+type env = {
+  headers : Header.t ;
+  work_dir : string ;
+  ocaml_dir : string ;
+  jobs : int ;
+}
 
 exception ProtocolError of Ocamlot.worker_message
 
@@ -88,7 +93,7 @@ let rec check_in_task ~env uri =
 let execute_task ~continue ~env uri task =
   pick [
     check_in_task ~env uri;
-    execute ~jobs:3 "work" env.work_dir env.ocaml_dir task;
+    execute ~jobs:env.jobs "work" env.work_dir env.ocaml_dir task;
   ]
   >>= complete_task ~continue ~env uri task
 
@@ -137,8 +142,13 @@ let request_task ~continue ~env worker_env uri =
 let forever work_dir ocaml_dir uri =
   let url = Uri.resolve "" uri (Uri.of_string "?queue") in
   let host = Host.detect () in
+  let jobs = try int_of_string (Sys.getenv "OPAMJOBS") with Not_found -> 1 in
   Opam_task.list_compilers ocaml_dir "bin"
   >>= fun compilers ->
   let rec work ~env =
+    Gc.minor ();
+    Gc.compact ();
+    let words, blocks = Gc.(let s = stat () in s.live_words, s.live_blocks) in
+    Printf.printf "new task: words:%d blocks:%d\n%!" words blocks;
     request_task ~continue:work ~env (host, (List.map fst compilers)) url
-  in work { headers = Header.init (); work_dir; ocaml_dir }
+  in work { headers = Header.init (); work_dir; ocaml_dir; jobs }
