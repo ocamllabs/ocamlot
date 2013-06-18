@@ -82,31 +82,19 @@ let run_command ?(env=[||]) ~cwd cmd_args =
   Unix.chdir cwd;
   let cmd_args = Array.of_list cmd_args in
   Lwt_process.with_process_full ~env ("", cmd_args) (fun process ->
-    let stdout = Lwt_io.read_lines process#stdout in
-    let stderr = Lwt_io.read_lines process#stderr in
+    let outpg = String.create pgsz in
     let outbuf = Buffer.create pgsz in
+    let errpg = String.create pgsz in
     let errbuf = Buffer.create pgsz in
-    let write_line buf s =
-      Buffer.add_string buf s;
-      Buffer.add_char buf '\n';
+    let rec read chan pg buf =
+      Lwt_io.read_into chan pg 0 pgsz
+      >>= function
+        | 0 -> return ()
+        | len -> Buffer.add_substring buf pg 0 len; read chan pg buf
     in
-    let read () =
-      List.iter (write_line outbuf) (Lwt_stream.get_available stdout);
-      List.iter (write_line errbuf) (Lwt_stream.get_available stderr);
-    in
-    let rec stream () = match process#state with
-      | Lwt_process.Running -> read (); Lwt_unix.yield () >>= stream
-      | Lwt_process.Exited status ->
-          read ();
-          (* tail of pipe without trailing newline *)
-          Lwt_io.read process#stdout
-          >>= fun s ->
-          Buffer.add_string outbuf s;
-          Lwt_io.read process#stderr
-          >>= fun s ->
-          Buffer.add_string errbuf s;
-          return status
-    in stream ()
+    ((read process#stdout outpg outbuf) <&> (read process#stderr errpg errbuf))
+    >>= fun () ->
+    process#status
     >>= fun status ->
     let r_duration = Time.(elapsed time (now ())) in
     let r = {
