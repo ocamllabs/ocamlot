@@ -4,18 +4,18 @@
 
 ### Server
 
- - ./ocamlot_cmd.native serve
+ - `./ocamlot_cmd.native serve`
 
 ### Worker
 
- - ../ocamlot/install_ocaml.sh <NICKNAME> <PATH_TO_OCAML_SRC>
- - ../ocamlot/ocamlot_cmd.native work <URL>
+ - `../ocamlot/install_ocaml.sh <NICKNAME> <PATH_TO_OCAML_SRC>`
+ - `../ocamlot/ocamlot_cmd.native work <URL>`
 
 ## Requirements
 
 System libraries:
 
-libssl
+ - libssl
 
 Pinned Dev packages:
 
@@ -42,7 +42,7 @@ These packages are installable with `./install_deps.sh`
 
 ## Build
 
-./setup_deps.sh
-./install_deps.sh
-oasis setup
-make
+ - `./setup_deps.sh`
+ - `./install_deps.sh`
+ - `oasis setup`
+ - `make`
