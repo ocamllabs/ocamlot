@@ -147,6 +147,9 @@ let opam_env ~path home opam_dir =
     [ "opam" ; "config" ; "env" ]
   >>= fun { Repo.r_stdout } ->
   let env = extract_env r_stdout 0 [] in
+  let path = Re_str.(split (regexp_string ":") (List.assoc "PATH" env)) in
+  let path = (List.hd path)::"."::(List.tl path) in
+  let env = ("PATH", String.concat ":" path)::(List.remove "PATH" env) in
   return ((List.remove_assoc "OPAMROOT" (List.remove_assoc "PATH" basic))@env)
 
 let initialize_opam ~env ~cwd ~jobs =
