@@ -77,7 +77,7 @@ let goal_renderer parent_title parent_uri =
               | Fail, _ | _, Fail -> Fail
               | Pending, _ | _, Pending -> Pending
               | Queued, _ | _, Queued -> Queued
-              | Pass, _ | _, Pass -> Pass
+              | Pass, Pass -> Pass
           ) Pass trl with
             | Pass -> "pass"
             | Fail -> "fail"
