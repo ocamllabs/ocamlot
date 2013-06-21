@@ -49,8 +49,8 @@ let mirror_head_repo = {
   repo = "opam-repository";
 }
 
-let git_ssh_of_repo {user; repo} =
-  Repo.SSH (Uri.of_string "git@github.com", Uri.of_string (user^"/"^repo^".git"))
+let git_of_repo {user; repo} =
+  Repo.URL (Uri.of_string ("git://github.com/"^user^"/"^repo^".git"))
 
 let url_of_repo {user; repo} = Uri.of_string
   (sprintf "https://github.com/%s/%s.git" user repo)
@@ -132,7 +132,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
     in loop []
   in
   let {user; repo} = main_repo in
-  let repo_url = git_ssh_of_repo main_repo in
+  let repo_url = git_of_repo main_repo in
   load_auth main_repo
   >>= fun github ->
   Github.(Monad.(run (
@@ -154,7 +154,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
       Commit (sprintf "refs/heads/pull-%d" pull.pull_number,
               pull.pull_base.branch_sha)) pulls)
     >>= fun dir ->
-    let base_url = git_ssh_of_repo mirror_base_repo in
+    let base_url = git_of_repo mirror_base_repo in
     let refspec = "refs/heads/*:refs/heads/*" in
     push_refspec ~dir ~url:base_url ~refspec
     >>= fun dir ->
@@ -162,7 +162,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
       Copy (sprintf "refs/heads/pull-%d" pull.pull_number,
             Ref (sprintf "refs/pull/%d/head" pull.pull_number))) pulls)
     >>= fun dir ->
-    let head_url = git_ssh_of_repo mirror_head_repo in
+    let head_url = git_of_repo mirror_head_repo in
     let refspec = "refs/heads/*:refs/heads/*" in
     push_refspec ~dir ~url:head_url ~refspec;
     >>= fun _ -> return ()
@@ -237,7 +237,7 @@ let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
           let base = {
             Repo.repo = Repo.({
               url=Uri.of_string "";
-              repo_url=git_ssh_of_repo main_repo
+              repo_url=git_of_repo main_repo
             });
             reference=Repo.Ref "master";
             label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
