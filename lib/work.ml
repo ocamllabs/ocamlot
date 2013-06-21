@@ -56,9 +56,9 @@ let print_result (Ocamlot.Opam task) = Result.(function
         (Time.duration_to_string duration)
 )
 
-let execute ~jobs prefix work_dir ocaml_dir = function
+let execute ?(debug=false) ~jobs prefix work_dir ocaml_dir = function
   | Ocamlot.Opam opam_task ->
-      Opam_task.run ~jobs prefix work_dir ocaml_dir opam_task
+      Opam_task.run ~debug ~jobs prefix work_dir ocaml_dir opam_task
 
 let complete_task ~continue ~env uri task result =
   let body = message (Ocamlot.Complete result) in

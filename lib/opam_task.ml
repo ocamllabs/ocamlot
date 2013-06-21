@@ -139,7 +139,7 @@ let opam_config_env_extractor =
     group (rep (compl [set ";"]));
     char ';'; non_greedy (rep any); eol;
   ])))
-let opam_env ~path home opam_dir =
+let opam_env ?(debug=false) ~path home opam_dir =
   let rec extract_env s pos lst =
     match Re.(get_all (exec ~pos opam_config_env_extractor s)) with
       | [|"";"";""|] -> lst
@@ -155,6 +155,7 @@ let opam_env ~path home opam_dir =
   let path = Re_str.(split (regexp_string ":") (List.assoc "PATH" env)) in
   let path = (List.hd path)::home::(List.tl path) in
   let env = ("PATH", String.concat ":" path)::(List.remove_assoc "PATH" env) in
+  let env = if debug then ("OPAMKEEPBUILDDIR","1")::env else env in
   return ((List.remove_assoc "OPAMROOT" (List.remove_assoc "PATH" basic))@env)
 
 let initialize_opam ~env ~cwd ~jobs =
@@ -201,7 +202,8 @@ let try_install env tmp pkgs =
     ("opam" :: "install" :: "--verbose" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
 
-let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
+let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
+    {action; diff; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
   let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
@@ -209,9 +211,11 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
   let { c_version } = target.compiler in
 
   let clean_up () =
-    Repo.run_commands ~cwd:tmp_name [
+    if debug then return ()
+    else Repo.run_commands ~cwd:tmp_name [
       [ "rm"; "-rf"; "opam-install" ];
       [ "rm"; "-rf"; "opam-repository" ];
+      [ "rm"; "ocamlfind" ];
     ] >>= fun _ -> return ()
   in
 
@@ -265,7 +269,7 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
     >>= fun () ->
     initialize_opam ~env ~cwd:tmp_name ~jobs
     >>= fun () ->
-    opam_env ~path tmp_name opam_root
+    opam_env ~debug ~path tmp_name opam_root
     >>= fun env ->
     Repo.run_command ~env:(make_env env) ~cwd:tmp_name
       [ "opam" ; "--git-version" ; ]

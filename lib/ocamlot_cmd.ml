@@ -198,7 +198,7 @@ let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
   )))))
 
 let () = Util.mkdir_p work_dir 0o700
-let build_testable testable repo_opt branch_opt = Lwt_main.run (
+let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
   let jobs = try int_of_string (Sys.getenv "OPAMJOBS") with Not_found -> 1 in
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
@@ -248,8 +248,8 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
             prefix, Ocamlot.Opam opam_task
           ) Opam_task.(tasks_of_packages [target] Build diff packages))
     end
-    >>= Lwt_list.map_p (fun (prefix, task) ->
-      Work.execute ~jobs prefix work_dir work_dir task
+    >>= Lwt_list.map_s (fun (prefix, task) ->
+      Work.execute ~debug ~jobs prefix work_dir work_dir task
       >>= fun result -> return (task, result)
     )
     >>= fun job_results ->
@@ -307,11 +307,14 @@ let testable_of_string s =
 let build_cmd =
   let testable_str = Arg.(required & pos 0 (some string) None & info []
                             ~docv:"PKGS_ID" ~doc:"Pull identifier or comma-separated package list") in
+  let debug = Arg.(value & flag & info ["debug"]
+                     ~docv:"DEBUG" ~doc:"retain opam install, repository, and build directory") in
   let overlay = Arg.(value & pos 1 (some string) None & info []
                        ~docv:"REPO_HREF" ~doc:"opam-repository URI reference to merge last") in
   let overlay_branch = Arg.(value & pos 2 (some string) None & info []
                               ~docv:"REPO_BRANCH" ~doc:"branch of $(b,REPO_HREF) to merge last") in
-  Term.(pure build_testable $ (pure testable_of_string $ testable_str) $ overlay $ overlay_branch),
+  Term.(pure build_testable $ (pure testable_of_string $ testable_str)
+          $ debug $ overlay $ overlay_branch),
   Term.info "build" ~doc:"build a Github OCamlPro/opam-repository pull request"
 
 let mirror_cmd =
