@@ -3,7 +3,6 @@
 DIR=`dirname $0`
 WORKERS=$1
 URL=$2
-ln -f $DIR/ocamlfind_not_found.sh ocamlfind
 mkdir -p log
 export OPAMJOBS=1
 for i in $(seq 1 $WORKERS); do

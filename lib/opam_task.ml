@@ -48,6 +48,11 @@ exception TargetError of target * (compiler * string) list
 let bin_subpath = "bin"
 let ocamlc = "ocamlc"
 
+let ocamlfind_not_found = "#!/bin/sh\n\n"
+  ^"echo \"This isn't the ocamlfind you're looking for.\"\n"
+  ^"echo \"ocamlfind: Package \\`ocamlfind' not found\"\n"
+  ^"exit 1\n"
+
 let string_of_action = function
   | Check -> "check"
   | Build -> "build"
@@ -148,7 +153,7 @@ let opam_env ~path home opam_dir =
   >>= fun { Repo.r_stdout } ->
   let env = extract_env r_stdout 0 [] in
   let path = Re_str.(split (regexp_string ":") (List.assoc "PATH" env)) in
-  let path = (List.hd path)::"."::(List.tl path) in
+  let path = (List.hd path)::home::(List.tl path) in
   let env = ("PATH", String.concat ":" path)::(List.remove_assoc "PATH" env) in
   return ((List.remove_assoc "OPAMROOT" (List.remove_assoc "PATH" basic))@env)
 
@@ -254,6 +259,10 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
       Printf.eprintf "OCAMLOT repo merge added\n%!";
       return merge_name
     in
+    Lwt_io.(with_file ~perm:0o700 ~mode:output
+              (Filename.concat tmp_name "ocamlfind")
+              (fun oc -> write oc ocamlfind_not_found))
+    >>= fun () ->
     initialize_opam ~env ~cwd:tmp_name ~jobs
     >>= fun () ->
     opam_env ~path tmp_name opam_root
