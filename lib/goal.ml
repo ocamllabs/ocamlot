@@ -63,7 +63,6 @@ let update_goal ~on_complete goal = function
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
 let category_of_analysis = function
-  | Result.No_solution _
   | Result.Incompatible -> Incompatible
   | Result.Error_for_warn -> Errorwarn
   | Result.Pkg_config_dep_ext _
@@ -74,6 +73,7 @@ let category_of_analysis = function
   | Result.Missing_ocamlfind_dep _
   | Result.Missing_findlib_constraint (_,_) -> Fixable
   | Result.Broken_link _ -> Transient
+  | Result.No_solution _
   | Result.Dep_error (_, _) -> Dependency
 
 let worst_of_fails = List.fold_left (max) Incompatible
