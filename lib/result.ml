@@ -125,12 +125,12 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (compl [space]));
     str " was not found in the pkg-config search path.";
   ], (fun m -> Pkg_config_dep_ext m.(1));
-  seq [ (* *)
+  seq [ (* tested 2013/6/21 *)
     str "checking whether pkg-config knows about ";
     group (rep1 (compl [space]));
     str " ";
-    group (shortest (rep1 any));
-    str "...";
+    group (seq [compl [set "o"]; shortest (rep1 any)]);
+    str "... "; compl [set "o"];
   ], (fun m -> Pkg_config_dep_ext_constraint (m.(1),m.(2)));
   seq [ (* tested 2013/6/21 *)
     str ": fatal error: ";
