@@ -40,6 +40,7 @@ type analysis =
   | Error_for_warn
   | Checksum of Uri.t * string * string
   | Pkg_config_dep_ext of string
+  | Pkg_config_dep_ext_constraint of string * string
   | Header_dep_ext of string
   | C_lib_dep_exts of string list
   | Missing_ocamlfind_dep of string
@@ -124,6 +125,13 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (compl [space]));
     str " was not found in the pkg-config search path.";
   ], (fun m -> Pkg_config_dep_ext m.(1));
+  seq [ (* *)
+    str "checking whether pkg-config knows about ";
+    group (rep1 (compl [space]));
+    str " ";
+    group (shortest (rep1 any));
+    str "...";
+  ], (fun m -> Pkg_config_dep_ext_constraint (m.(1),m.(2)));
   seq [ (* tested 2013/6/21 *)
     str ": fatal error: ";
     group (rep1 (compl [set "."]));
@@ -198,6 +206,8 @@ let rec string_of_analysis = function
   | Error_for_warn -> "error-enabled warnings"
   | Checksum (_, _, _) -> "invalid checksum"
   | Pkg_config_dep_ext pkg -> "no external dependency \""^pkg^"\""
+  | Pkg_config_dep_ext_constraint (pkg, bound) ->
+      "external dependency \""^pkg^"\" must be \""^bound^"\""
   | Header_dep_ext header -> "no external dependency \""^header^".h\""
   | C_lib_dep_exts exts -> "no external dependencies: "
       ^(String.concat ", " (List.map (fun ext -> "\""^ext^"\"") exts))
