@@ -87,6 +87,7 @@ let solver_errors_of_r { Repo.r_args; r_stdout } =
   ) [] matches
 
 let pkg_build_error_re = Re.(compile (seq [
+  (* tested 2013/6/21 *)
   bol; str "==== ERROR [while installing ";
   group (rep1 (compl [set "]"]));
 ]))
@@ -104,7 +105,7 @@ let build_error_stderr_re = Re.(List.map compile_pair [
   ], (fun m ->
     Checksum (Uri.of_string (String.sub m.(1) 0 ((String.length m.(1)) - 1)),
               m.(2), m.(3)));
-  seq [
+  seq [ (* tested 2013/6/21 *)
     str "configure: error: ";
     group (rep1 (compl [space]));
     str " not found";
@@ -115,25 +116,29 @@ let build_error_stderr_re = Re.(List.map compile_pair [
   ], (fun m -> Broken_link (Uri.of_string m.(1)));
 ])
 let build_error_stdout_re = Re.(List.map compile_pair [
-  (* tested 2013/6/21 *)
-  str "Error: Error-enabled warnings", (fun _ -> Error_for_warn);
-  seq [str "Package ";
-       group (rep1 (compl [space]));
-       str " was not found in the pkg-config search path.";
-      ], (fun m -> Pkg_config_dep_ext m.(1));
-  seq [str ": fatal error: ";
-       group (rep1 (compl [set "."]));
-       str ".h: No such file or directory";
-      ], (fun m -> Header_dep_ext m.(1));
-  seq [str "ocamlfind: Package `";
-       group (rep1 (compl [set "'"]));
-       str "' not found";
-      ], (fun m -> Missing_ocamlfind_dep m.(1));
-  seq [str "E: Cannot find findlib package ";
-       group (rep1 (compl [space]));
-       str " (";
-       group (rep1 (compl [set ")"]));
-      ], (fun m -> Missing_findlib_constraint (m.(1),m.(2)));
+  str "Error: Error-enabled warnings", (* tested 2013/6/21 *)
+  (fun _ -> Error_for_warn);
+  seq [ (* tested 2013/6/21 *)
+    str "Package ";
+    group (rep1 (compl [space]));
+    str " was not found in the pkg-config search path.";
+  ], (fun m -> Pkg_config_dep_ext m.(1));
+  seq [ (* tested 2013/6/21 *)
+    str ": fatal error: ";
+    group (rep1 (compl [set "."]));
+    str ".h: No such file or directory";
+  ], (fun m -> Header_dep_ext m.(1));
+  seq [ (* tested 2013/6/21 *)
+    str "ocamlfind: Package `";
+    group (rep1 (compl [set "'"]));
+    str "' not found";
+  ], (fun m -> Missing_ocamlfind_dep m.(1));
+  seq [ (* tested 2013/6/21 *)
+    str "E: Cannot find findlib package ";
+    group (rep1 (compl [space]));
+    str " (";
+    group (rep1 (compl [set ")"]));
+  ], (fun m -> Missing_findlib_constraint (m.(1),m.(2)));
 ])
 
 let rec search k str = function
