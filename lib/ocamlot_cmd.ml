@@ -199,6 +199,7 @@ let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
 
 let () = Util.mkdir_p work_dir 0o700
 let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
+  catch (fun () ->
   let jobs = try int_of_string (Sys.getenv "OPAMJOBS") with Not_found -> 1 in
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
@@ -257,6 +258,7 @@ let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
       Work.print_result ~debug task result
     ) job_results)
   end
+  ) (Repo.die "build_testable")
 )
 
 let work_url url_str = Lwt_main.run (
