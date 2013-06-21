@@ -215,7 +215,7 @@ let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
     else Repo.run_commands ~cwd:tmp_name [
       [ "rm"; "-rf"; "opam-install" ];
       [ "rm"; "-rf"; "opam-repository" ];
-      [ "rm"; "ocamlfind" ];
+      [ "rm"; "-f";  "ocamlfind" ];
     ] >>= fun _ -> return ()
   in
 
