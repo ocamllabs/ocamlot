@@ -113,8 +113,14 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     str " not found";
   ], (fun m -> Pkg_config_dep_ext m.(1));
   seq [ (* tested 2013/6/21 *)
-    str "curl: 404 is not a valid return code.\nCannot get ";
+    str "Cannot get ";
     group (rep1 notnl);
+  ], (fun m -> Broken_link (Uri.of_string m.(1)));
+  seq [ (* *)
+    str "Internal error:\n";
+    rep space;
+    group (rep1 (compl [space]));
+    str " is not available.";
   ], (fun m -> Broken_link (Uri.of_string m.(1)));
 ])
 let build_error_stdout_re = Re.(List.map compile_pair [
