@@ -196,8 +196,8 @@ let remove_opam_repository ~env ~cwd name =
   clone_dir
 *)
 
-let try_install env tmp pkgs =
-  let () = Array.iter print_endline env in
+let try_install ?(debug=false) env tmp pkgs =
+  if debug then Array.iter print_endline env;
   Repo.run_command ~env ~cwd:tmp
     ("opam" :: "install" :: "--verbose" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
@@ -226,10 +226,10 @@ let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
          (Time.duration_to_string duration))
       exn in
     clean_up ()
-    >>= fun () ->
-    return Result.({ status=Failed; duration;
-                     output={ err; out; info; };
-                   })
+    >>= fun () -> Result.(
+      let output = { err; out; info; } in
+      return { status=Failed (analyze exn); duration; output; }
+    )
   in
 
   catch (fun () ->
@@ -301,7 +301,7 @@ let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
       >>= set_opam_repo env
       >>= fun merge_dir ->
       Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
-      try_install env tmp_name packages
+      try_install ~debug env tmp_name packages
       >>= fun (pkgs, result) ->
       let duration = Time.(elapsed start (now ())) in
 

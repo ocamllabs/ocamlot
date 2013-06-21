@@ -18,7 +18,10 @@
 open Lwt
 open Ocamlot
 
-type task_status = Pass | Fail | Pending | Queued
+type task_status =
+  | Pending | Queued
+  | Pass
+  | Fail of Result.analysis list
 
 let task_subpath = "task"
 
@@ -66,7 +69,8 @@ let goal_renderer parent_title parent_uri =
       in
       let task_state task = match last_event task with
         | (_, Completed (_, { Result.status = Result.Passed })) -> Pass
-        | (_, Completed (_, { Result.status = Result.Failed })) -> Fail
+        | (_, Completed (_, { Result.status = Result.Failed reason})) ->
+            Fail reason
         | (_, Started _) | (_, Checked_in _) -> Pending
         | _ -> Queued
       in
@@ -74,13 +78,16 @@ let goal_renderer parent_title parent_uri =
         let cell_classes trl =
           match List.fold_left (fun ostate tr ->
             match ostate, task_state (Resource.content tr) with
-              | Fail, _ | _, Fail -> Fail
+              | Fail x, (Pending | Queued | Pass)
+              | (Pending | Queued | Pass), Fail x -> Fail x
+              | Fail x, Fail y when x=y -> Fail x
+              | Fail x, Fail y -> Fail (x @ y)
               | Pending, _ | _, Pending -> Pending
               | Queued, _ | _, Queued -> Queued
               | Pass, Pass -> Pass
           ) Pass trl with
             | Pass -> "pass"
-            | Fail -> "fail"
+            | Fail _ -> "fail"
             | Pending -> "pending"
             | Queued -> "queued"
         in
@@ -88,7 +95,7 @@ let goal_renderer parent_title parent_uri =
           let task = Resource.content tr in
           let task_state_str = match task_state task with
             | Pass -> "PASS"
-            | Fail -> "FAIL"
+            | Fail _ -> "FAIL"
             | Pending -> "pending"
             | Queued -> "queued"
           in

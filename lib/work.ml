@@ -43,18 +43,13 @@ let print_output { Result.err; info; out } =
   Printf.eprintf "%s%s\n%!" (banner "INFO") info;
   ()
 
-let print_result (Ocamlot.Opam task) = Result.(function
-  | { status=Failed; duration; output } ->
-      print_output output;
-      Printf.eprintf "OCAMLOT %s FAILED in %s\n%!"
-        (Opam_task.to_string task)
-        (Time.duration_to_string duration)
-  | { status=Passed; duration; output } ->
-      print_output output;
-      Printf.eprintf "OCAMLOT %s PASSED in %s\n%!"
-        (Opam_task.to_string task)
-        (Time.duration_to_string duration)
-)
+let print_result ?(debug=false) (Ocamlot.Opam task)
+    { Result.status; duration; output } =
+  if debug || Result.is_failure status then print_output output;
+  Printf.eprintf "OCAMLOT %s %s in %s\n%!"
+    (Opam_task.to_string task)
+    (Result.string_of_status status)
+    (Time.duration_to_string duration)
 
 let execute ?(debug=false) ~jobs prefix work_dir ocaml_dir = function
   | Ocamlot.Opam opam_task ->

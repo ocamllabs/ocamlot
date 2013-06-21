@@ -254,7 +254,7 @@ let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
     )
     >>= fun job_results ->
     return (List.iter (fun (task, result) ->
-      Work.print_result task result
+      Work.print_result ~debug task result
     ) job_results)
   end
 )
