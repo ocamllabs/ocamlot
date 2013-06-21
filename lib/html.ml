@@ -97,6 +97,12 @@ let page ?title body =
       <style type='text/css'>
          .pass { background-color: green; }
          .fail { background-color: red; }
+         .errwarn { background-color: maroon; }
+         .incompatible { background-color: gray; }
+         .dependency { background-color: yellow; }
+         .fixable { background-color: orange; }
+         .transient { backround-color: purple; }
+         .extdep { background-color: blue; }
       </style>
       <title>$str:page_title$</title>
     </head>

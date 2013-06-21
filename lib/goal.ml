@@ -18,10 +18,19 @@
 open Lwt
 open Ocamlot
 
+type failure_category =
+  | Incompatible
+  | Dependency
+  | Transient
+  | Fixable
+  | Ext_dep
+  | Errorwarn
+  | Broken
+
 type task_status =
   | Pending | Queued
   | Pass
-  | Fail of Result.analysis list
+  | Fail of failure_category list
 
 let task_subpath = "task"
 
@@ -53,6 +62,40 @@ let update_goal ~on_complete goal = function
   | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
+let category_of_analysis = function
+  | Result.No_solution _
+  | Result.Incompatible -> Incompatible
+  | Result.Error_for_warn -> Errorwarn
+  | Result.Pkg_config_dep_ext _
+  | Result.Pkg_config_dep_ext_constraint (_,_)
+  | Result.Header_dep_ext _
+  | Result.C_lib_dep_exts _ -> Ext_dep
+  | Result.Checksum (_,_,_)
+  | Result.Missing_ocamlfind_dep _
+  | Result.Missing_findlib_constraint (_,_) -> Fixable
+  | Result.Broken_link _ -> Transient
+  | Result.Dep_error (_, _) -> Dependency
+
+let worst_of_fails = List.fold_left (max) Incompatible
+
+let class_of_fails fails = match worst_of_fails fails with
+  | Broken -> "fail"
+  | Errorwarn -> "errwarn"
+  | Incompatible -> "incompatible"
+  | Dependency -> "dependency"
+  | Fixable -> "fixable"
+  | Transient -> "transient"
+  | Ext_dep -> "extdep"
+
+let label_of_fails fails = match worst_of_fails fails with
+  | Broken -> "UNKNOWN"
+  | Errorwarn -> "ERRWARN"
+  | Incompatible -> "INCOMPAT"
+  | Dependency -> "DEP"
+  | Fixable -> "EASY"
+  | Transient -> "TRANS"
+  | Ext_dep -> "EXTDEP"
+
 let goal_renderer parent_title parent_uri =
   let render_html event =
     let render_tasks_table trl =
@@ -69,8 +112,10 @@ let goal_renderer parent_title parent_uri =
       in
       let task_state task = match last_event task with
         | (_, Completed (_, { Result.status = Result.Passed })) -> Pass
+        | (_, Completed (_, { Result.status = Result.Failed []})) ->
+            Fail [Broken]
         | (_, Completed (_, { Result.status = Result.Failed reason})) ->
-            Fail reason
+            Fail (List.map category_of_analysis reason)
         | (_, Started _) | (_, Checked_in _) -> Pending
         | _ -> Queued
       in
@@ -87,7 +132,7 @@ let goal_renderer parent_title parent_uri =
               | Pass, Pass -> Pass
           ) Pass trl with
             | Pass -> "pass"
-            | Fail _ -> "fail"
+            | Fail fails -> class_of_fails fails
             | Pending -> "pending"
             | Queued -> "queued"
         in
@@ -95,7 +140,7 @@ let goal_renderer parent_title parent_uri =
           let task = Resource.content tr in
           let task_state_str = match task_state task with
             | Pass -> "PASS"
-            | Fail _ -> "FAIL"
+            | Fail fails -> label_of_fails fails
             | Pending -> "pending"
             | Queued -> "queued"
           in
