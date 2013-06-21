@@ -41,6 +41,7 @@ type analysis =
   | Checksum of Uri.t * string * string
   | Pkg_config_dep_ext of string
   | Header_dep_ext of string
+  | C_lib_dep_exts of string list
   | Missing_ocamlfind_dep of string
   | Missing_findlib_constraint of string * string
   | Broken_link of Uri.t
@@ -139,6 +140,13 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     str " (";
     group (rep1 (compl [set ")"]));
   ], (fun m -> Missing_findlib_constraint (m.(1),m.(2)));
+  seq [ (* tested 2013/6/21 *)
+    str "The following re";
+    opt (char 'c');
+    str "quired C libraries are missing:";
+    group (rep1 (seq [char ' '; rep1 (compl [space])]));
+    str ".";
+  ], (fun m -> C_lib_dep_exts Re_str.(split (regexp_string " ") m.(1)));
 ])
 
 let rec search k str = function
@@ -191,6 +199,8 @@ let rec string_of_analysis = function
   | Checksum (_, _, _) -> "invalid checksum"
   | Pkg_config_dep_ext pkg -> "no external dependency \""^pkg^"\""
   | Header_dep_ext header -> "no external dependency \""^header^".h\""
+  | C_lib_dep_exts exts -> "no external dependencies: "
+      ^(String.concat ", " (List.map (fun ext -> "\""^ext^"\"") exts))
   | Missing_ocamlfind_dep dep -> "missing ocamlfind dependency \""^dep^"\""
   | Missing_findlib_constraint (pkg, bound) ->
       "missing findlib constraint \""^pkg^" "^bound^"\""
