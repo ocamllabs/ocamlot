@@ -61,7 +61,7 @@ type t = {
 let is_failure = function Passed -> false | Failed _ -> true
 
 let rec match_global ?(pos=0) ?(lst=[]) re s =
-  let matches = Re.(get_all (exec ~pos re s)) in
+  let matches = try Re.(get_all (exec ~pos re s)) with Not_found -> [|""|] in
   if matches.(0) = ""
   then lst
   else match_global
@@ -69,6 +69,7 @@ let rec match_global ?(pos=0) ?(lst=[]) re s =
     ~lst:(matches::lst) re s
 
 let unsat_dep_re = Re.(compile (seq [
+  (* tested 2013/6/21 *)
   str "The dependency ";
   group (rep1 (compl [space]));
   str " of package ";
