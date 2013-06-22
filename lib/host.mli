@@ -16,6 +16,7 @@ type arch =
   | I386 
   | I686 
   | Armv61 
+  | PPC64
   | Unknown
 with sexp
 

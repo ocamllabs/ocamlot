@@ -35,6 +35,7 @@ type arch =
   | I386
   | I686
   | Armv61
+  | PPC64
   | Unknown
 with sexp
 
@@ -89,6 +90,7 @@ let string_of_arch = function
   | I386 -> "i386"
   | I686 -> "i686"
   | Armv61 -> "armv61"
+  | PPC64 -> "ppc64"
   | Unknown -> "unknown"
 
 let arch_of_string_opt = function
@@ -96,6 +98,7 @@ let arch_of_string_opt = function
   | Some "amd64" -> X86_64
   | Some "i386" -> I386
   | Some "i686" -> I686
+  | Some "ppc64" -> PPC64
   | Some "armv61" -> Armv61
   | Some _ | None -> Unknown
 
