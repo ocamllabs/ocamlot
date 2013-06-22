@@ -268,6 +268,10 @@ let work_url url_str = Lwt_main.run (
     (Uri.of_string url_str)
 )
 
+let infox ()  =
+  let info = Host.detect () in
+  Printf.printf "host: %s\n%!" (Host.to_string info)
+
 let serve () =
   (* TODO: BEGIN should be adjustable from command line *)
   let open Config in
@@ -331,6 +335,10 @@ let work_cmd =
   Term.(pure work_url $ url),
   Term.info "work" ~doc:"queue for work"
 
+let info_cmd =
+  Term.(pure infox $ pure ()),
+  Term.info "info" ~doc:"show information about this host"
+
 let serve_cmd =
   Term.(pure serve $ pure ()),
   Term.info "serve" ~doc:"start an ocamlot server daemon"
@@ -350,7 +358,7 @@ let default_cmd =
 let cmds = [
   list_cmd; show_cmd; open_cmd;
   build_cmd; mirror_cmd; work_cmd;
-  serve_cmd;
+  serve_cmd; info_cmd
 ]
 
 let () =
