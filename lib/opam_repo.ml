@@ -120,6 +120,7 @@ let packages_of_repo root_dir branch =
   Repo.run_command ~cwd:root_dir [ "rm" ; "-rf" ; dir ]
   >>= fun _ ->
   (* sort *)
+  let all_libs = false in
   let libraries = Hashtbl.create 500 in
   let libset = List.fold_left (fun set pkg ->
     let i = String.index pkg '.' in
@@ -139,7 +140,8 @@ let packages_of_repo root_dir branch =
       | [] -> Hashtbl.remove sorted_libs lib
       | v::r ->
           pkgl_ref := (lib^v)::!pkgl_ref;
-          Hashtbl.replace sorted_libs lib r
+          Hashtbl.replace sorted_libs lib
+            (if all_libs then r else [])
     ) sorted_libs
   done;
   return !pkgl_ref

@@ -48,6 +48,11 @@ exception TargetError of target * (compiler * string) list
 let bin_subpath = "bin"
 let ocamlc = "ocamlc"
 
+let ocamlfind_not_found = "#!/bin/sh\n\n"
+  ^"echo \"This isn't the ocamlfind you're looking for.\"\n"
+  ^"echo \"ocamlfind: Package \\`ocamlfind' not found\"\n"
+  ^"exit 1\n"
+
 let string_of_action = function
   | Check -> "check"
   | Build -> "build"
@@ -134,7 +139,7 @@ let opam_config_env_extractor =
     group (rep (compl [set ";"]));
     char ';'; non_greedy (rep any); eol;
   ])))
-let opam_env ~path home opam_dir =
+let opam_env ?(debug=false) ~path home opam_dir =
   let rec extract_env s pos lst =
     match Re.(get_all (exec ~pos opam_config_env_extractor s)) with
       | [|"";"";""|] -> lst
@@ -147,6 +152,10 @@ let opam_env ~path home opam_dir =
     [ "opam" ; "config" ; "env" ]
   >>= fun { Repo.r_stdout } ->
   let env = extract_env r_stdout 0 [] in
+  let path = Re_str.(split (regexp_string ":") (List.assoc "PATH" env)) in
+  let path = (List.hd path)::home::(List.tl path) in
+  let env = ("PATH", String.concat ":" path)::(List.remove_assoc "PATH" env) in
+  let env = if debug then ("OPAMKEEPBUILDDIR","1")::env else env in
   return ((List.remove_assoc "OPAMROOT" (List.remove_assoc "PATH" basic))@env)
 
 let initialize_opam ~env ~cwd ~jobs =
@@ -187,13 +196,14 @@ let remove_opam_repository ~env ~cwd name =
   clone_dir
 *)
 
-let try_install env tmp pkgs =
-  let () = Array.iter print_endline env in
+let try_install ?(debug=false) env tmp pkgs =
+  if debug then Array.iter print_endline env;
   Repo.run_command ~env ~cwd:tmp
     ("opam" :: "install" :: "--verbose" :: "--yes" :: pkgs)
   >>= fun r -> return (pkgs, r)
 
-let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
+let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
+    {action; diff; packages; target} =
   let start = Time.now () in
   let jobs = match jobs with None -> 1 | Some j -> j in
   let tmp_name = Repo.make_temp_dir ~root_dir ~prefix in
@@ -201,9 +211,11 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
   let { c_version } = target.compiler in
 
   let clean_up () =
-    Repo.run_commands ~cwd:tmp_name [
+    if debug then return ()
+    else Repo.run_commands ~cwd:tmp_name [
       [ "rm"; "-rf"; "opam-install" ];
       [ "rm"; "-rf"; "opam-repository" ];
+      [ "rm"; "-f";  "ocamlfind" ];
     ] >>= fun _ -> return ()
   in
 
@@ -214,10 +226,10 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
          (Time.duration_to_string duration))
       exn in
     clean_up ()
-    >>= fun () ->
-    return Result.({ status=Failed; duration;
-                     output={ err; out; info; };
-                   })
+    >>= fun () -> Result.(
+      let output = { err; out; info; } in
+      return { status=Failed (analyze exn); duration; output; }
+    )
   in
 
   catch (fun () ->
@@ -251,22 +263,23 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
       Printf.eprintf "OCAMLOT repo merge added\n%!";
       return merge_name
     in
+    Lwt_io.(with_file ~perm:0o700 ~mode:output
+              (Filename.concat tmp_name "ocamlfind")
+              (fun oc -> write oc ocamlfind_not_found))
+    >>= fun () ->
     initialize_opam ~env ~cwd:tmp_name ~jobs
     >>= fun () ->
-    opam_env ~path tmp_name opam_root
+    opam_env ~debug ~path tmp_name opam_root
     >>= fun env ->
     Repo.run_command ~env:(make_env env) ~cwd:tmp_name
       [ "opam" ; "--git-version" ; ]
     >>= fun { Repo.r_stdout } ->
     let opam_version = Util.strip r_stdout in
-    which "ocamlfind" ~env tmp_name
-    >>= fun ocamlfind_path ->
     ocamlc_path ~env ocaml_dir
     >>= compiler_of_path
     >>= fun compiler ->
     let info = "Compiler: "^(string_of_compiler compiler)^"\n" in
     let info = info^"OPAM: "^opam_version^"\n" in
-    let info = info^"which ocamlfind: "^ocamlfind_path^"\n" in
     let info = List.fold_left (fun s (k,v) -> s^k^" = "^v^"\n") info env in
 
     let env = make_env env in
@@ -288,7 +301,7 @@ let run ?jobs prefix root_dir ocaml_dir {action; diff; packages; target} =
       >>= set_opam_repo env
       >>= fun merge_dir ->
       Printf.eprintf "OCAMLOT building %s\n%!" (String.concat " " packages);
-      try_install env tmp_name packages
+      try_install ~debug env tmp_name packages
       >>= fun (pkgs, result) ->
       let duration = Time.(elapsed start (now ())) in
 

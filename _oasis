@@ -13,6 +13,8 @@ Library ocamlot
   Findlibname: ocamlot
   Modules: Github_hook, Github_listener, Http_server, Ocamlot, Resource, Ocamlot_cmd, Util, Host, Time, Config, Opam_task, Opam_repo, Repo, Result, Work, Serve, Goal, Html
   BuildDepends: lwt, uri, cohttp.lwt, sexplib, sexplib.syntax, github, re, re.str, cryptokit, cmdliner, cow, cow.syntax
+  NativeOpt: -w @f@p@u
+  ByteOpt:   -w @f@p@u
 
 Executable ocamlot
   Path: lib

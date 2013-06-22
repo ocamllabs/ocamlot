@@ -45,8 +45,8 @@ let targets = Opam_task.(Host.([
 
 let watch_list = [
 (*  "ocamlot", "opam-repository"; *)
-  ("ocamlot-dev", "opam-repository"), {
-    listen=true; comprehensive=false; targets; };
+(*  ("ocamlot-dev", "opam-repository"), {
+    listen=true; comprehensive=false; targets; }; *)
   ("OCamlPro", "opam-repository"), {
     listen=false; comprehensive=true; targets; };
 ]

@@ -49,8 +49,8 @@ let mirror_head_repo = {
   repo = "opam-repository";
 }
 
-let git_ssh_of_repo {user; repo} =
-  Repo.SSH (Uri.of_string "git@github.com", Uri.of_string (user^"/"^repo^".git"))
+let git_of_repo {user; repo} =
+  Repo.URL (Uri.of_string ("git://github.com/"^user^"/"^repo^".git"))
 
 let url_of_repo {user; repo} = Uri.of_string
   (sprintf "https://github.com/%s/%s.git" user repo)
@@ -132,7 +132,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
     in loop []
   in
   let {user; repo} = main_repo in
-  let repo_url = git_ssh_of_repo main_repo in
+  let repo_url = git_of_repo main_repo in
   load_auth main_repo
   >>= fun github ->
   Github.(Monad.(run (
@@ -154,7 +154,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
       Commit (sprintf "refs/heads/pull-%d" pull.pull_number,
               pull.pull_base.branch_sha)) pulls)
     >>= fun dir ->
-    let base_url = git_ssh_of_repo mirror_base_repo in
+    let base_url = git_of_repo mirror_base_repo in
     let refspec = "refs/heads/*:refs/heads/*" in
     push_refspec ~dir ~url:base_url ~refspec
     >>= fun dir ->
@@ -162,7 +162,7 @@ let mirror_pulls pull_ids = Lwt_main.run (Github_t.(
       Copy (sprintf "refs/heads/pull-%d" pull.pull_number,
             Ref (sprintf "refs/pull/%d/head" pull.pull_number))) pulls)
     >>= fun dir ->
-    let head_url = git_ssh_of_repo mirror_head_repo in
+    let head_url = git_of_repo mirror_head_repo in
     let refspec = "refs/heads/*:refs/heads/*" in
     push_refspec ~dir ~url:head_url ~refspec;
     >>= fun _ -> return ()
@@ -198,7 +198,8 @@ let diff_of_pull pull_id = Opam_repo.diff_of_pull (Lwt_main.run (
   )))))
 
 let () = Util.mkdir_p work_dir 0o700
-let build_testable testable repo_opt branch_opt = Lwt_main.run (
+let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
+  catch (fun () ->
   let jobs = try int_of_string (Sys.getenv "OPAMJOBS") with Not_found -> 1 in
   let repo_of_path rpath name =
     let cwd = Uri.of_string (Filename.concat (Unix.getcwd ()) "") in
@@ -237,7 +238,7 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
           let base = {
             Repo.repo = Repo.({
               url=Uri.of_string "";
-              repo_url=git_ssh_of_repo main_repo
+              repo_url=git_of_repo main_repo
             });
             reference=Repo.Ref "master";
             label=sprintf "%s/%s:master" main_repo.user main_repo.repo;
@@ -248,15 +249,16 @@ let build_testable testable repo_opt branch_opt = Lwt_main.run (
             prefix, Ocamlot.Opam opam_task
           ) Opam_task.(tasks_of_packages [target] Build diff packages))
     end
-    >>= Lwt_list.map_p (fun (prefix, task) ->
-      Work.execute ~jobs prefix work_dir work_dir task
+    >>= Lwt_list.map_s (fun (prefix, task) ->
+      Work.execute ~debug ~jobs prefix work_dir work_dir task
       >>= fun result -> return (task, result)
     )
     >>= fun job_results ->
     return (List.iter (fun (task, result) ->
-      Work.print_result task result
+      Work.print_result ~debug task result
     ) job_results)
   end
+  ) (Repo.die "build_testable")
 )
 
 let work_url url_str = Lwt_main.run (
@@ -265,6 +267,10 @@ let work_url url_str = Lwt_main.run (
     (Filename.concat (Unix.getcwd ()) "ocaml")
     (Uri.of_string url_str)
 )
+
+let infox ()  =
+  let info = Host.detect () in
+  Printf.printf "host: %s\n%!" (Host.to_string info)
 
 let serve () =
   (* TODO: BEGIN should be adjustable from command line *)
@@ -307,11 +313,14 @@ let testable_of_string s =
 let build_cmd =
   let testable_str = Arg.(required & pos 0 (some string) None & info []
                             ~docv:"PKGS_ID" ~doc:"Pull identifier or comma-separated package list") in
+  let debug = Arg.(value & flag & info ["debug"]
+                     ~docv:"DEBUG" ~doc:"retain opam install, repository, and build directory") in
   let overlay = Arg.(value & pos 1 (some string) None & info []
                        ~docv:"REPO_HREF" ~doc:"opam-repository URI reference to merge last") in
   let overlay_branch = Arg.(value & pos 2 (some string) None & info []
                               ~docv:"REPO_BRANCH" ~doc:"branch of $(b,REPO_HREF) to merge last") in
-  Term.(pure build_testable $ (pure testable_of_string $ testable_str) $ overlay $ overlay_branch),
+  Term.(pure build_testable $ (pure testable_of_string $ testable_str)
+          $ debug $ overlay $ overlay_branch),
   Term.info "build" ~doc:"build a Github OCamlPro/opam-repository pull request"
 
 let mirror_cmd =
@@ -325,6 +334,10 @@ let work_cmd =
                    ~docv:"OCAMLOT_URL" ~doc:"URL of task queue resource") in
   Term.(pure work_url $ url),
   Term.info "work" ~doc:"queue for work"
+
+let info_cmd =
+  Term.(pure infox $ pure ()),
+  Term.info "info" ~doc:"show information about this host"
 
 let serve_cmd =
   Term.(pure serve $ pure ()),
@@ -345,7 +358,7 @@ let default_cmd =
 let cmds = [
   list_cmd; show_cmd; open_cmd;
   build_cmd; mirror_cmd; work_cmd;
-  serve_cmd;
+  serve_cmd; info_cmd
 ]
 
 let () =
