@@ -24,23 +24,19 @@ type policy = {
   targets : Opam_task.target list;
 }
 
+let ocaml_4_00 = Opam_task.({ c_version = "4.00.1"; c_build = ""; })
+let ocaml_4_01 = Opam_task.({ c_version = "4.01.0"; c_build = ""; })
+let ocaml_4_02 = Opam_task.({ c_version = "4.02.0"; c_build = ""; })
 let targets = Opam_task.(Host.([
 (*  { host = { os = Linux;
              arch = X86_64; };
     compiler = { c_version = "3.12.1";
                  c_build = ""; }; }; *)
-  { host = { os = Linux;
-             arch = X86_64; };
-    compiler = { c_version = "4.00.1";
-                 c_build = ""; }; };
-  { host = { os = Linux;
-             arch = X86_64; };
-    compiler = { c_version = "4.01.0";
-                 c_build = ""; }; };
-  { host = { os = Linux;
-             arch = X86_64; };
-    compiler = { c_version = "4.02.0";
-                 c_build = ""; }; };
+  { host = { os = Linux; arch = PPC64; };    compiler = ocaml_4_01; };
+  { host = { os = Linux; arch = Armv5tel; }; compiler = ocaml_4_01; };
+  { host = { os = Linux; arch = X86_64; };   compiler = ocaml_4_00; };
+  { host = { os = Linux; arch = X86_64; };   compiler = ocaml_4_01; };
+  { host = { os = Linux; arch = X86_64; };   compiler = ocaml_4_02; };
 ]))
 
 let watch_list = [
