@@ -33,6 +33,7 @@ let targets = Opam_task.(Host.([
     compiler = { c_version = "3.12.1";
                  c_build = ""; }; }; *)
   { host = { os = FreeBSD; arch = I386; };     compiler = ocaml_4_01; };
+  { host = { os = FreeBSD; arch = X86_64; };   compiler = ocaml_4_01; };
   { host = { os = OpenBSD; arch = I386; };     compiler = ocaml_4_01; };
   { host = { os = OpenBSD; arch = Powerpc; };  compiler = ocaml_4_01; };
   { host = { os = OpenBSD; arch = X86_64; };   compiler = ocaml_4_01; };
