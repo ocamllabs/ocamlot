@@ -18,6 +18,7 @@ type arch =
   | Armv5tel
   | Armv61 
   | PPC64
+  | Powerpc
   | Unknown
 with sexp
 
