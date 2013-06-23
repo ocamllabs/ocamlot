@@ -66,7 +66,7 @@ let string_of_os = function
   | Darwin -> "Darwin"
   | Linux -> "Linux"
   | FreeBSD -> "FreeBSD"
-  | OpenBSD -> "OpanBSD"
+  | OpenBSD -> "OpenBSD"
   | NetBSD -> "NetBSD"
   | DragonFly -> "DragonFly"
   | Cygwin -> "Cygwin"

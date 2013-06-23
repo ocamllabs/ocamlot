@@ -32,11 +32,12 @@ let targets = Opam_task.(Host.([
              arch = X86_64; };
     compiler = { c_version = "3.12.1";
                  c_build = ""; }; }; *)
-  { host = { os = Linux; arch = PPC64; };    compiler = ocaml_4_01; };
-  { host = { os = Linux; arch = Armv5tel; }; compiler = ocaml_4_01; };
-  { host = { os = Linux; arch = X86_64; };   compiler = ocaml_4_00; };
-  { host = { os = Linux; arch = X86_64; };   compiler = ocaml_4_01; };
-  { host = { os = Linux; arch = X86_64; };   compiler = ocaml_4_02; };
+  { host = { os = OpenBSD; arch = Powerpc; };  compiler = ocaml_4_01; };
+  { host = { os = Linux;   arch = PPC64; };    compiler = ocaml_4_01; };
+  { host = { os = Linux;   arch = Armv5tel; }; compiler = ocaml_4_01; };
+  { host = { os = Linux;   arch = X86_64; };   compiler = ocaml_4_00; };
+  { host = { os = Linux;   arch = X86_64; };   compiler = ocaml_4_01; };
+  { host = { os = Linux;   arch = X86_64; };   compiler = ocaml_4_02; };
 ]))
 
 let watch_list = [
