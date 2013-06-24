@@ -167,7 +167,7 @@ let build_error_stdout_re = Re.(List.map compile_pair [
 let rec search k str = function
   | [] -> k ()
   | (patt,cons)::r ->
-      (try cons (Re.get_all (Re.exec patt str))
+      (try [cons (Re.get_all (Re.exec patt str))]
        with Not_found -> search k str r)
 
 (* given a string `str' and a list of constructors on regex patterns,
