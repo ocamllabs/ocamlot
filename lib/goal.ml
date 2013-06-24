@@ -32,6 +32,7 @@ type task_status =
   | Pass
   | Fail of failure_category list
 
+let state_branch = "paleolithic-00"
 let task_subpath = "task"
 
 let rec update_goal_subgoal goal = function
@@ -285,8 +286,8 @@ let write_task dir tr =
       Repo.add ~path:filename
       >>= fun dir ->
       Repo.commit ~dir ~message
-      (*>>= fun dir ->
-        Repo.push ~dir*)
+      >>= fun dir ->
+      Repo.push ~dir ~branch:state_branch
     )
     >>= fun _ ->
     return ()

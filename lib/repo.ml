@@ -214,9 +214,9 @@ let commit ~dir ~message =
   ]
   >>= fun _ -> return dir
 
-let push ~dir =
+let push ~dir ~branch =
   run_command ~cwd:dir [
-    "git" ; "push" ;
+    "git" ; "push" ; "origin" ; branch ;
   ]
   >>= fun _ -> return dir
 
