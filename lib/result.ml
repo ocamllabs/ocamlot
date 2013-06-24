@@ -46,7 +46,7 @@ type analysis =
   | Missing_ocamlfind_dep of string
   | Missing_findlib_constraint of string * string
   | Broken_link of Uri.t
-  | Dep_error of string * analysis
+  | Dep_error of string * analysis list
 with sexp
 
 type status =
@@ -63,12 +63,12 @@ type t = {
 let is_failure = function Passed -> false | Failed _ -> true
 
 let rec match_global ?(pos=0) ?(lst=[]) re s =
-  let matches = try Re.(get_all (exec ~pos re s)) with Not_found -> [|""|] in
-  if matches.(0) = ""
-  then lst
-  else match_global
-    ~pos:(pos + (String.length matches.(0)) + 1)
-    ~lst:(matches::lst) re s
+  let ofs = try Re.(get_all_ofs (exec ~pos re s))
+    with Not_found -> [|-1,-1|] in
+  if ofs.(0) = (-1,-1) then lst
+  else
+    let matches = ofs.(0), Array.map (fun (a,z) -> String.sub s a (z-a)) ofs in
+    match_global ~pos:(snd ofs.(0)) ~lst:(matches::lst) re s
 
 let unsat_dep_re = Re.(compile (seq [
   (* tested 2013/6/21 *)
@@ -81,11 +81,11 @@ let unsat_dep_re = Re.(compile (seq [
 let solver_errors_of_r { Repo.r_args; r_stdout } =
   let matches = match_global unsat_dep_re r_stdout in
   if 0 = List.length matches then [No_solution None]
-  else List.fold_left (fun lst m ->
+  else List.fold_left (fun lst (_,m) ->
     let err = No_solution (Some (Unsatisfied_dep m.(1))) in
     if List.mem m.(2) r_args
     then err::lst
-    else (Dep_error (m.(2), err))::lst
+    else (Dep_error (m.(2), [err]))::lst
   ) [] matches
 
 let pkg_build_error_re = Re.(compile (seq [
@@ -123,6 +123,7 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     str " is not available.";
   ], (fun m -> Broken_link (Uri.of_string m.(1)));
 ])
+
 let build_error_stdout_re = Re.(List.map compile_pair [
   str "Error: Error-enabled warnings", (* tested 2013/6/21 *)
   (fun _ -> Error_for_warn);
@@ -169,18 +170,32 @@ let rec search k str = function
       (try cons (Re.get_all (Re.exec patt str))
        with Not_found -> search k str r)
 
+(* given a string `str' and a list of constructors on regex patterns,
+   find the last match in `str' for all patterns *)
+let rec last_match ?x str = function
+  | [] -> begin match x with Some (c,_) -> Some c | None -> None end
+  | (patt,cons)::r -> begin match match_global patt str with
+      | [] -> last_match ?x str r
+      | ms ->
+          let maxm = List.fold_left
+            (fun (c,z) ((_,z'),m) -> if z > z' then (c,z) else (m,z'))
+            ([||],-1) ms
+          in begin match x with
+            | Some (_,lmofs) when lmofs > snd maxm -> last_match ?x str r
+            | _ -> last_match ~x:(cons (fst maxm), snd maxm) str r
+          end
+  end
+
 (* TODO: catch multiple package failures and ensure they match their errors *)
 let build_errors_of_r { Repo.r_args; r_stderr; r_stdout } =
   try
     let pkg = Re.(get (exec pkg_build_error_re r_stderr) 1) in
-    let err = search
-      (fun () -> search
-        (fun () -> raise (Failure "couldn't match anything"))
-        r_stderr build_error_stderr_re)
-      r_stdout build_error_stdout_re
+    let err = match last_match r_stdout build_error_stdout_re with
+      | Some c -> [c]
+      | None -> search (fun () -> []) r_stderr build_error_stderr_re
     in
     if List.mem pkg r_args
-    then [err]
+    then err
     else [Dep_error (pkg, err)]
   with _ -> []
 
@@ -221,11 +236,10 @@ let rec string_of_analysis = function
   | Missing_findlib_constraint (pkg, bound) ->
       "missing findlib constraint \""^pkg^" "^bound^"\""
   | Broken_link uri -> "could not retrieve <"^(Uri.to_string uri)^">"
-  | Dep_error (dep, subanalysis) ->
+  | Dep_error (dep, subanalyses) ->
       Printf.sprintf "error in dependency \"%s\" (%s)"
-        dep (string_of_analysis subanalysis)
-
-let string_of_analysis_list = function
+        dep (string_of_analysis_list subanalyses)
+and string_of_analysis_list = function
   | [] -> "unknown"
   | al -> String.concat ", " (List.map string_of_analysis al)
 

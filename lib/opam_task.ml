@@ -132,19 +132,23 @@ let list_compilers root subpath =
   )
 
 let opam_config_env_extractor =
-  Re.(compile (rep (seq [
+  Re.(compile (seq [
     bol;
     group (rep1 (compl [set "="]));
     char '=';
     group (rep (compl [set ";"]));
     char ';'; non_greedy (rep any); eol;
-  ])))
+  ]))
 let opam_env ?(debug=false) ~path home opam_dir =
   let rec extract_env s pos lst =
-    match Re.(get_all (exec ~pos opam_config_env_extractor s)) with
-      | [|"";"";""|] -> lst
-      | [|m; k; v|] -> extract_env s (pos + (String.length m) + 1) ((k,v)::lst)
-      | _ -> lst
+    match begin
+      try Some Re.(get_all_ofs (exec ~pos opam_config_env_extractor s))
+      with Not_found -> None
+    end with None -> lst | Some ofs -> begin
+      match Array.map (fun (a,z) -> String.sub s a (z-a)) ofs with
+        | [|m; k; v|] -> extract_env s (snd ofs.(0)) ((k,v)::lst)
+        | _ -> lst
+    end
   in
   let basic = basic_env ~path home opam_dir in
   let env = make_env basic in
