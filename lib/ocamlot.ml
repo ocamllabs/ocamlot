@@ -411,7 +411,9 @@ let browser_listener service_fn ~base t_resource =
   let t = Resource.content t_resource in
   let html = `text `html in
   let respond s = Lwt.(
-    Server.respond_string ~status:`OK ~body:s ()
+    let headers = Header.add (Header.init ())
+      "content-type" "application/xhtml+xml" in
+    Server.respond_string ~headers ~status:`OK ~body:s ()
     >>= Http_server.some_response
   ) in
   let handler conn_id ?body req = Lwt.(
