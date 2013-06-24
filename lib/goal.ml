@@ -371,6 +371,7 @@ let make_integration t_resource ~title ~descr ~slug ~min_id ~goal_state_path =
         Repo.push ~dir:goal_state_path ~branch:state_branch
         >>= fun _ -> return ()
       ) (fun _ -> (* the remote is probably down or flaky *)
+        Printf.eprintf "Ignoring git push failure!\n%!";
         return ()
       )
     )
