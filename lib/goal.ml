@@ -286,8 +286,6 @@ let write_task dir tr =
       Repo.add ~path:filename
       >>= fun dir ->
       Repo.commit ~dir ~message
-      >>= fun dir ->
-      Repo.push ~dir ~branch:state_branch
     )
     >>= fun _ ->
     return ()
@@ -366,7 +364,16 @@ let make_integration t_resource ~title ~descr ~slug ~min_id ~goal_state_path =
   } in
   Util.mkdir_p (Filename.concat goal_state_path task_subpath) 0o700;
   new_goal t_resource integration
-    (fun tr () -> write_task goal_state_path tr)
+    (fun tr () ->
+      write_task goal_state_path tr
+      >>= fun () ->
+      catch (fun () ->
+        Repo.push ~dir:goal_state_path ~branch:state_branch
+        >>= fun _ -> return ()
+      ) (fun _ -> (* the remote is probably down or flaky *)
+        return ()
+      )
+    )
 
 let make_pull integration_gr ~title ~descr ~slug =
   let base = base_of_resource_slug integration_gr slug in
