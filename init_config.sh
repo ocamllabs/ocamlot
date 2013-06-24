@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -x
 
 BRANCH=paleolithic-00
 PWD=`pwd`
@@ -15,4 +15,5 @@ if [ ! -e $STATE ]; then
   cd $PWD
 fi
 cd $STATE
+git pull origin
 git checkout $BRANCH
