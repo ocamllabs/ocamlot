@@ -361,6 +361,9 @@ let cmds = [
   serve_cmd; info_cmd
 ]
 
+let handle_sigpipe _ = Printf.eprintf "SIGPIPE\n%!"
+
 let () =
+  Sys.(set_signal sigpipe (Signal_handle handle_sigpipe));
   match Term.eval_choice default_cmd cmds with
-  | `Error _ -> exit 1 | _ -> exit 0
+    | `Error _ -> exit 1 | _ -> exit 0
