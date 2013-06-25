@@ -101,7 +101,7 @@ let page ?title body =
          .incompatible { background-color: gray; }
          .dependency { background-color: yellow; }
          .fixable { background-color: orange; }
-         .transient { backround-color: purple; }
+         .transient { background-color: white; }
          .extdep { background-color: blue; }
       </style>
       <title>$str:page_title$</title>
