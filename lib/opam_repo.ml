@@ -23,7 +23,6 @@ module StrSet = Set.Make(String)
 
 type pull_part = Base | Head
 exception WTFGitHub of string
-exception GitError of Result.output
 exception NonPackageUpdate of string list
 
 let ref_base_of_string = Printf.sprintf "refs/pull/%s/"
