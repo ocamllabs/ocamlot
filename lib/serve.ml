@@ -55,6 +55,11 @@ let watch_list = [
 
 let state_path = Filename.concat (Unix.getcwd ()) Config.state_path
 
+let state_path_of_github_repo (user, repo) =
+  let name = user^"/"^repo in
+  let slug = "github/"^name in
+  Filename.concat state_path slug
+
 let forever base port =
   let host = match Uri.host base with None -> "" | Some host -> host in
   let ocamlot = Ocamlot.make ~base in
@@ -76,9 +81,7 @@ let forever base port =
     let http_server = Http_server.make_server host port in
 
     Lwt_list.map_p (fun ((user, repo), policy) ->
-      let name = user^"/"^repo in
-      let slug = "github/"^name in
-      let goal_state_path = Filename.concat state_path slug in
+      let goal_state_path = state_path_of_github_repo (user, repo) in
 
       Goal.read_tasks goal_state_path
       >>= fun repo_trs ->
