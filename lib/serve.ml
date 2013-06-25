@@ -40,6 +40,7 @@ let targets = Opam_task.(Host.([
   { host = { os = OpenBSD; arch = X86_64; };   compiler = ocaml_4_01; };
   { host = { os = Linux;   arch = PPC64; };    compiler = ocaml_4_01; };
   { host = { os = Linux;   arch = Armv5tel; }; compiler = ocaml_4_01; };
+  { host = { os = Linux;   arch = Armv6l; };   compiler = ocaml_4_01; };
   { host = { os = Linux;   arch = X86_64; };   compiler = ocaml_4_00; };
   { host = { os = Linux;   arch = X86_64; };   compiler = ocaml_4_01; };
   { host = { os = Linux;   arch = X86_64; };   compiler = ocaml_4_02; };
