@@ -35,7 +35,7 @@ type arch =
   | I386
   | I686
   | Armv5tel
-  | Armv61
+  | Armv6l
   | PPC64
   | Powerpc
   | Unknown
@@ -92,7 +92,7 @@ let string_of_arch = function
   | I386 -> "i386"
   | I686 -> "i686"
   | Armv5tel -> "armv5tel"
-  | Armv61 -> "armv61"
+  | Armv6l -> "armv6l"
   | PPC64 -> "ppc64"
   | Powerpc -> "powerpc"
   | Unknown -> "unknown"
@@ -106,7 +106,7 @@ let arch_of_string_opt = function
   | Some "ppc64" -> PPC64
   | Some "powerpc" -> Powerpc
   | Some "macppc" -> Powerpc
-  | Some "armv61" -> Armv61
+  | Some "armv6l" -> Armv6l
   | Some _ | None -> Unknown
 
 let to_string { os; arch } =
