@@ -35,17 +35,19 @@ exception ProtocolError of Ocamlot.worker_message
 let serialize sexp = Body.body_of_string (Sexplib.Sexp.to_string sexp)
 let message mesg = serialize (Ocamlot.sexp_of_worker_message mesg)
 
-let print_output { Result.err; info; out } =
+let banner title =
   let hr = String.make 80 '=' in
-  let banner title = Printf.sprintf "%s\n%s\n%s\n" hr title hr in
-  Printf.eprintf "%s%s\n%!" (banner "STDOUT") out;
-  Printf.eprintf "%s%s\n%!" (banner "STDERR") err;
-  Printf.eprintf "%s%s\n%!" (banner "INFO") info;
-  ()
+  Printf.sprintf "%s\n%s\n%s\n" hr title hr
 
 let print_result ?(debug=false) (Ocamlot.Opam task)
-    { Result.status; duration; output } =
-  if debug || Result.is_failure status then print_output output;
+    ({ Result.status; duration; info } as result) =
+  if debug || Result.is_failure status
+  then begin
+    let err, out = Result.to_bufs result in
+    Printf.eprintf "%s%s\n%!" (banner "STDOUT") out;
+    Printf.eprintf "%s%s\n%!" (banner "STDERR") err;
+    Printf.eprintf "%s%s\n%!" (banner "INFO") info;
+  end;
   Printf.eprintf "OCAMLOT %s %s in %s\n%!"
     (Opam_task.to_string task)
     (Result.string_of_status status)

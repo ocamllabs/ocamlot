@@ -111,15 +111,14 @@ let goal_renderer parent_title parent_uri =
           | { Opam_task.packages = [ _ ] } -> true
           | _ -> false) trl
       in
-      let task_state task = match last_event task with
-        | (_, Completed (_, { Result.status = Result.Passed })) -> Pass
-        | (_, Completed (_, { Result.status = Result.Failed []})) ->
-            Fail [Broken]
-        | (_, Completed (_, { Result.status = Result.Failed reason})) ->
+      let task_state task = Result.(match last_event task with
+        | (_, Completed (_, { status = Passed _ })) -> Pass
+        | (_, Completed (_, { status = Failed ([],_) })) -> Fail [Broken]
+        | (_, Completed (_, { status = Failed (reason,_)})) ->
             Fail (List.map category_of_analysis reason)
         | (_, Started _) | (_, Checked_in _) -> Pending
         | _ -> Queued
-      in
+      ) in
       let task_cell trl =
         let cell_classes trl =
           match List.fold_left (fun ostate tr ->
@@ -289,7 +288,7 @@ let write_task dir tr =
     )
     >>= fun _ ->
     return ()
-  ) (Repo.die "Goal.write_task")
+  ) (Result.die "Goal.commit_task")
 
 module TaskSet = Set.Make(struct
   type t = Opam_task.t
@@ -312,7 +311,7 @@ let missing_tasks user repo targets task_records =
     >>= fun packages ->
     let tasks = Opam_task.(tasks_of_packages targets Build [repo] packages) in
     return (List.filter (fun task -> not (TaskSet.mem task set)) tasks)
-  ) (Repo.die "Goal.missing_tasks")
+  ) (Result.die "Goal.missing_tasks")
 
 let new_goal t_resource goal on_complete =
   let t = Resource.content t_resource in

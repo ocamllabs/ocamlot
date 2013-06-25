@@ -225,15 +225,10 @@ let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
 
   let opam_fail info exn =
     let duration = Time.(elapsed start (now ())) in
-    let err,out = Repo.process_error
-      (Printf.sprintf "After %s Opam_task.run"
-         (Time.duration_to_string duration))
-      exn in
     clean_up ()
-    >>= fun () -> Result.(
-      let output = { err; out; info; } in
-      return { status=Failed (analyze exn); duration; output; }
-    )
+    >>= fun () ->
+    let error = Result.error_of_exn exn in
+    return Result.({ status=Failed (analyze error, error); duration; info; })
   in
 
   catch (fun () ->
@@ -308,19 +303,9 @@ let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
       try_install ~debug env tmp_name packages
       >>= fun (pkgs, result) ->
       let duration = Time.(elapsed start (now ())) in
-
-      let facts = Printf.sprintf "OCAMLOT \"opam install %s\" succeeded in %s\n"
-        (String.concat " " pkgs)
-        (Time.duration_to_string duration) in
       clean_up ()
       >>= fun () ->
-      return Result.({ status=Passed;
-                       duration;
-                       output={
-                         err=facts^result.Repo.r_stderr;
-                         out=result.Repo.r_stdout;
-                         info};
-                     })
+      return Result.({ status=Passed result; duration; info; })
     ) (opam_fail info)
   ) (opam_fail "")
 

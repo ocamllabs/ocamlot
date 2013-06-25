@@ -258,7 +258,7 @@ let build_testable testable debug repo_opt branch_opt = Lwt_main.run (
       Work.print_result ~debug task result
     ) job_results)
   end
-  ) (Repo.die "build_testable")
+  ) (Result.die "build_testable")
 )
 
 let work_url url_str = Lwt_main.run (

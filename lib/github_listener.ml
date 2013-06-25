@@ -90,8 +90,8 @@ let scan targets endpoint gh_repo_resource =
                              (Uri.of_string href))
       ) Opam_task.(tasks_of_packages targets Build diff packages);
       return ()
-    ) (Repo.die (Printf.sprintf "Github_listener.scan \"%s\""
-                   (Uri.to_string (Resource.uri pull_goal))))
+    ) (Result.die (Printf.sprintf "Github_listener.scan \"%s\""
+                     (Uri.to_string (Resource.uri pull_goal))))
   )
 
 let attach listener ~user ~repo targets gh_repo_resource =

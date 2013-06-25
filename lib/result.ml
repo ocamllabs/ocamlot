@@ -24,12 +24,6 @@ module Uri = struct
   let sexp_of_t uri = Sexplib.Std.sexp_of_string (to_string uri)
 end
 
-type output = {
-  err : string;
-  out : string;
-  info: string;
-} with sexp
-
 type solver_error =
   | Unsatisfied_dep of string (* TODO: this is pkg + constraint right now *)
 with sexp
@@ -49,18 +43,25 @@ type analysis =
   | Dep_error of string * analysis list
 with sexp
 
+type error =
+  | Process of Repo.proc_status * Repo.r
+  | Other of string * string
+with sexp
+
 type status =
-  | Passed
-  | Failed of analysis list
+  | Passed of Repo.r
+  | Failed of analysis list * error
 with sexp
 
 type t = {
   status : status;
   duration : Time.duration;
-  output : output;
+  info : string;
 } with sexp
 
-let is_failure = function Passed -> false | Failed _ -> true
+let is_failure = function Passed _ -> false | Failed (_,_) -> true
+
+let get_status {status} = status
 
 let rec match_global ?(pos=0) ?(lst=[]) re s =
   let ofs = try Re.(get_all_ofs (exec ~pos re s))
@@ -213,11 +214,52 @@ let other_errors_of_r { Repo.r_stderr } =
   with _ -> []
 
 let analyze = Repo.(function
-  | ProcessError (Unix.WEXITED 3, r) -> solver_errors_of_r r
-  | ProcessError (Unix.WEXITED 4, r) -> build_errors_of_r r
-  | ProcessError (Unix.WEXITED 66,r) -> other_errors_of_r r
-  | exn -> []
+  | Process (Exited 3, r) -> solver_errors_of_r r
+  | Process (Exited 4, r) -> build_errors_of_r r
+  | Process (Exited 66,r) -> other_errors_of_r r
+  | _ -> []
 )
+
+let error_of_exn = Repo.(function
+  | ProcessError (status, r) -> Process (status, r)
+  | exn -> Other (string_of_sexp (sexp_of_exn exn),
+                  if Printexc.backtrace_status ()
+                  then "Backtrace:\n"^(Printexc.get_backtrace ())
+                  else "No backtrace available.")
+)
+
+let bufs_of_error site = Repo.(function
+  | Process (Exited code, r) ->
+      (Printf.sprintf "%s\nOCAMLOT %s \"%s %s\" failed (%d) in %s\n"
+         r.r_stderr site r.r_cmd (String.concat " " r.r_args) code
+         (Time.duration_to_string r.r_duration), r.r_stdout)
+  | Process (Stopped signum, r)
+  | Process (Signaled signum, r) ->
+      (Printf.sprintf "%s\nOCAMLOT %s \"%s %s\" terminated by signal %d in %s\n"
+         r.r_stderr site r.r_cmd (String.concat " " r.r_args) signum
+         (Time.duration_to_string r.r_duration), r.r_stdout)
+  | Other (sexn, backtrace) ->
+      (Printf.sprintf "OCAMLOT %s terminated by\n%s\n%s\n" site sexn backtrace,
+       "")
+)
+
+let to_bufs = Repo.(function
+  | { status = Passed r; duration } ->
+      let facts = Printf.sprintf "OCAMLOT \"%s %s\" succeeded in %s\n"
+        r.r_cmd (String.concat " " r.r_args)
+        (Time.duration_to_string duration) in
+      (facts^r.r_stderr, r.r_stdout)
+  | { status = Failed (_, error); duration } ->
+      bufs_of_error
+        (Printf.sprintf "After %s Opam_task.run"
+           (Time.duration_to_string duration))
+        error
+)
+
+let die site exn =
+  let err, out = bufs_of_error site (error_of_exn exn) in
+  Printf.eprintf "stdout: %s\nstderr: %s\n%!" out err;
+  exit 1
 
 let rec string_of_analysis = function
   | No_solution None -> "no constraint solution"
@@ -244,15 +286,14 @@ and string_of_analysis_list = function
   | al -> String.concat ", " (List.map string_of_analysis al)
 
 let string_of_status = function
-  | Passed -> "PASSED"
-  | Failed al -> Printf.sprintf "FAILED (%s)" (string_of_analysis_list al)
+  | Passed _ -> "PASSED"
+  | Failed (al,_) -> Printf.sprintf "FAILED (%s)" (string_of_analysis_list al)
 
-let get_status {status} = status
-
-let to_html { status; duration; output } =
+let to_html ({ status; duration; info } as t) =
+  let err, out = to_bufs t in
   let status_class = match status with
-    | Passed -> "passed"
-    | Failed _ -> "failed"
+    | Passed _ -> "passed"
+    | Failed (_,_) -> "failed"
   in <:html<
   <div class='summary'>
     <span class=$str:"status" ^ status_class$>$str:string_of_status status$</span>
@@ -260,9 +301,9 @@ let to_html { status; duration; output } =
     <span class='duration'>$str:Time.duration_to_string duration$</span>
   </div>
   <span>stderr</span>
-  <pre class='stderr'>$str:output.err$</pre>
+  <pre class='stderr'>$str:err$</pre>
   <span>stdout</span>
-  <pre class='stdout'>$str:output.out$</pre>
+  <pre class='stdout'>$str:out$</pre>
   <span>environment</span>
-  <pre class='info'>$str:output.info$</pre>
+  <pre class='info'>$str:info$</pre>
   >>

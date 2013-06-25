@@ -59,9 +59,15 @@ type r = {
   r_duration : Time.duration;
   r_stdout : string;
   r_stderr : string;
-}
+} with sexp
 
-exception ProcessError of Unix.process_status * r
+type proc_status =
+  | Exited of int
+  | Signaled of int
+  | Stopped of int
+with sexp
+
+exception ProcessError of proc_status * r
 
 let rec string_of_diff = function
   | [] -> ""
@@ -107,7 +113,9 @@ let run_command ?(env=[||]) ~cwd cmd_args =
       r_stderr = Buffer.contents errbuf;
     } in match status with
       | Unix.WEXITED 0 -> return r
-      | _ -> fail (ProcessError (status,r))
+      | Unix.WEXITED k -> fail (ProcessError (Exited k,r))
+      | Unix.WSIGNALED k -> fail (ProcessError (Signaled k,r))
+      | Unix.WSTOPPED k -> fail (ProcessError (Stopped k,r))
   )
 
 let run_commands ?(env=[||]) ~cwd =
@@ -219,25 +227,3 @@ let push ~dir ~branch =
     "git" ; "push" ; "origin" ; branch ;
   ]
   >>= fun _ -> return dir
-
-let process_error site = function
-  | ProcessError (Unix.WEXITED code, r) ->
-      Printf.sprintf "%s\nOCAMLOT %s \"%s %s\" failed (%d) in %s\n"
-        r.r_stderr site r.r_cmd (String.concat " " r.r_args) code
-        (Time.duration_to_string r.r_duration), r.r_stdout
-  | ProcessError (Unix.WSTOPPED signum, r)
-  | ProcessError (Unix.WSIGNALED signum, r) ->
-      Printf.sprintf "%s\nOCAMLOT %s \"%s %s\" terminated by signal %d in %s\n"
-        r.r_stderr site r.r_cmd (String.concat " " r.r_args) signum
-        (Time.duration_to_string r.r_duration), r.r_stdout
-  | exn ->
-      Printf.sprintf "OCAMLOT %s terminated by \"%s\"\n%s\n"
-        site (Printexc.to_string exn)
-        (if Printexc.backtrace_status ()
-         then "Backtrace:\n"^(Printexc.get_backtrace ())
-         else "No backtrace available."), ""
-
-let die site exn =
-  let err, out = process_error site exn in
-  Printf.eprintf "stdout: %s\nstderr: %s\n%!" out err;
-  exit 1
