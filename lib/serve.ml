@@ -82,13 +82,15 @@ let forever base port =
     let http_server = Http_server.make_server host port in
 
     Lwt_list.map_p (fun ((user, repo), policy) ->
+      let name = user^"/"^repo in
+      let slug = "github/"^name in
       let goal_state_path = state_path_of_github_repo (user, repo) in
 
       Goal.read_tasks goal_state_path
       >>= fun repo_trs ->
       let descr = <:html<
         The goal is to monitor and test the
-        <a href="$str:"https://github.com/"^name$">$str:name$</a>
+        <a href=$str:"https://github.com/"^name$>$str:name$</a>
         package repository.
       >> in
       let resource = Goal.make_integration ocamlot
