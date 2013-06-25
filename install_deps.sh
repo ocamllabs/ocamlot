@@ -2,7 +2,7 @@
 
 # system library libssl is required
 
-opam install \
+opam install $* \
 oasis-mirage \
 cohttp \
 cryptokit \
