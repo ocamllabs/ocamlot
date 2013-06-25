@@ -1,5 +1,5 @@
 type os =
-    Darwin
+  | Darwin
   | Linux
   | FreeBSD
   | OpenBSD
@@ -12,11 +12,11 @@ type os =
 with sexp
 
 type arch =
-  | X86_64 
-  | I386 
-  | I686 
+  | X86_64
+  | I386
+  | I686
   | Armv5tel
-  | Armv61 
+  | Armv6l
   | PPC64
   | Powerpc
   | Unknown
