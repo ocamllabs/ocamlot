@@ -191,6 +191,11 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     group (rep1 (compl [space]));
     str " not found";
   ], (fun m -> Pkg_config_dep_ext m.(1));
+  seq [ (* tested 2013/6/26 *)
+    str "configure: error: Cannot find ";
+    group (rep1 (compl [set "."]));
+    str ".";
+  ], (fun m -> C_lib_dep_exts [m.(1)]);
   seq [ (* tested 2013/6/21 *)
     str "Cannot get ";
     group (rep1 notnl);
