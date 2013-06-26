@@ -207,7 +207,9 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     str "... "; compl [set "o"];
   ], (fun m -> Pkg_config_dep_ext_constraint (m.(1),m.(2)));
   seq [ (* tested 2013/6/21 *)
-    str ": fatal error: ";
+    str ": ";
+    opt (str "fatal ");
+    str "error: ";
     group (rep1 (compl [set "."]));
     str ".h: No such file or directory";
   ], (fun m -> Header_dep_ext m.(1));
