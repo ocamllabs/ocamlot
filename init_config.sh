@@ -15,5 +15,5 @@ if [ ! -e $STATE ]; then
   cd $PWD
 fi
 cd $STATE
-git pull origin
-git checkout $BRANCH
+git pull origin $BRANCH
+git checkout -b $BRANCH
