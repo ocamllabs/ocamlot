@@ -173,6 +173,11 @@ let pkg_build_error_re = Re.(compile (seq [
   group (rep1 (compl [set "]"]));
 ]))
 
+let no_space_recognizer =
+  seq [ (* tested 2013/6/26 *)
+    str "No space left on device";
+  ], (fun m -> System_error No_space)
+
 let compile_pair (re,cons) = (Re.compile re,cons)
 let build_error_stderr_re = Re.(List.map compile_pair [
   seq [ (* tested 2013/6/21 *)
@@ -213,6 +218,7 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     group (rep1 (compl [set "\""]));
     str "\": command not found.";
   ], (fun m -> Command_dep_ext m.(1));
+  no_space_recognizer;
 ])
 
 let build_error_stdout_re = Re.(List.map compile_pair [
@@ -285,9 +291,7 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     str "ld: library not found for -l";
     group (rep1 notnl);
   ], (fun m -> C_lib_dep_exts [m.(1)]);
-  seq [ (* tested 2013/6/26 *)
-    str "No space left on device";
-  ], (fun m -> System_error No_space);
+  no_space_recognizer;
 ])
 
 let rec search k str = function
