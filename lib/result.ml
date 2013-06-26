@@ -231,11 +231,23 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     str ".h' file not found";
   ], (fun m -> Header_dep_ext m.(1));
   seq [ (* tested 2013/6/26 *)
-    alt [str "make: "; str "/bin/sh: "];
+    str "make: ";
     group (rep1 (compl [set ":"]));
     str ": ";
     alt [str "C"; str "c"];
     str "ommand not found";
+  ], (fun m -> Command_dep_ext m.(1));
+  seq [ (* *)
+    str "/bin/sh: ";
+    group (rep1 (compl [set ":"]));
+    str ": ";
+    alt [
+      seq [
+        opt (str "command ");
+        str "not found";
+      ];
+      str "No such file or directory";
+    ];
   ], (fun m -> Command_dep_ext m.(1));
   seq [ (* tested 2013/6/21 *)
     str "ocamlfind: Package `";
