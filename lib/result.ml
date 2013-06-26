@@ -201,6 +201,13 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     group (rep1 (compl [space]));
     str " is not available.";
   ], (fun m -> Broken_link (Uri.of_string m.(1)));
+  seq [ (* tested 2013/6/26 *)
+    str "Internal error:\n";
+    rep space;
+    str "\"";
+    group (rep1 (compl [set "\""]));
+    str "\": command not found.";
+  ], (fun m -> Command_dep_ext m.(1));
 ])
 
 let build_error_stdout_re = Re.(List.map compile_pair [
