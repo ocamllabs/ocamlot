@@ -28,6 +28,7 @@ type category =
   | Incompat
   | Dependency
   | Transient
+  | System
   | Fixable (* Meta *)
   | Ext_dep
   | Errorwarn
@@ -37,8 +38,13 @@ type solver_error =
   | Unsatisfied_dep of string (* TODO: this is pkg + constraint right now *)
 with sexp
 
+type system_error =
+  | No_space
+with sexp
+
 type analysis =
   | No_solution of solver_error option
+  | System_error of system_error
   | Incompatible
   | Error_for_warn
   | Checksum of Uri.t * string * string
@@ -93,6 +99,7 @@ let category_of_analysis = function
   | Checksum (_,_,_)
   | Missing_ocamlfind_dep _
   | Missing_findlib_constraint (_,_) -> Fixable (* Meta *)
+  | System_error _ -> System
   | Broken_link _ -> Transient
   | No_solution _
   | Dep_error (_, _) -> Dependency
@@ -109,6 +116,7 @@ let string_of_category = function
   | Incompat -> "INCOMPAT"
   | Dependency -> "DEP"
   | Fixable -> "META"
+  | System -> "SYSTEM"
   | Transient -> "TRANS"
   | Ext_dep -> "EXTDEP"
 
@@ -121,6 +129,7 @@ let triage prev report =
     | Header_dep_ext _
     | Command_dep_ext _
     | C_lib_dep_exts _
+    | System_error No_space
     | No_solution _ ->
         if report = prev
         then Stable
@@ -246,10 +255,13 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (seq [char ' '; rep1 (compl [space])]));
     str ".";
   ], (fun m -> C_lib_dep_exts Re_str.(split (regexp_string " ") m.(1)));
-  seq [ (* *)
+  seq [ (* tested 2013/6/26 *)
     str "ld: library not found for -l";
     group (rep1 notnl);
   ], (fun m -> C_lib_dep_exts [m.(1)]);
+  seq [ (* tested 2013/6/26 *)
+    str "No space left on device";
+  ], (fun m -> System_error No_space);
 ])
 
 let rec search k str = function
@@ -348,6 +360,9 @@ let die site exn =
   Printf.eprintf "stdout: %s\nstderr: %s\n%!" out err;
   exit 1
 
+let string_of_system_error = function
+  | No_space -> "storage exhausted"
+
 let rec string_of_analysis = function
   | No_solution None -> "no constraint solution"
   | No_solution (Some (Unsatisfied_dep dep)) ->
@@ -365,6 +380,7 @@ let rec string_of_analysis = function
   | Missing_ocamlfind_dep dep -> "missing ocamlfind dependency \""^dep^"\""
   | Missing_findlib_constraint (pkg, bound) ->
       "missing findlib constraint \""^pkg^" "^bound^"\""
+  | System_error sys_err -> "system error: "^(string_of_system_error sys_err)
   | Broken_link uri -> "could not retrieve <"^(Uri.to_string uri)^">"
   | Dep_error (dep, subanalyses) ->
       Printf.sprintf "error in dependency \"%s\" (%s)"

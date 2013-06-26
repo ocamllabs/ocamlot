@@ -61,6 +61,7 @@ let class_of_category = Result.(function
   | Dependency -> "dependency"
   | Fixable -> "meta"
   | Transient -> "transient"
+  | System -> "system"
   | Ext_dep -> "extdep"
 )
 

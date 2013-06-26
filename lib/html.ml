@@ -102,6 +102,7 @@ let page ?title body =
          .dependency { background-color: yellow; }
          .meta { background-color: orange; }
          .transient { background-color: white; }
+         .system { background-color: pink; }
          .extdep { background-color: blue; }
       </style>
       <title>$str:page_title$</title>
