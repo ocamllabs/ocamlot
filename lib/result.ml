@@ -351,12 +351,17 @@ let system_errors_of_r { Repo.r_stderr } =
   end with _ -> []
 
 let analyze = Repo.(function
-  | Process (Exited 1, r)                 -> system_errors_of_r r
-  | Process (Exited 3, r)                 -> solver_errors_of_r r
-  | Process (Exited 4, r)                 -> build_errors_of_r r
-  | Process (Exited 66,r)                 -> other_errors_of_r r
-  | Process ((Stopped _ | Signaled _), r) -> system_errors_of_r r
-  | _                                     -> []
+  | Process (Exited 1,
+             ({ r_cmd = "opam" } as r)) -> system_errors_of_r r
+  | Process (Exited 3,
+             ({ r_cmd = "opam" } as r)) -> solver_errors_of_r r
+  | Process (Exited 4,
+             ({ r_cmd = "opam" } as r)) -> build_errors_of_r r
+  | Process (Exited 66,
+             ({ r_cmd = "opam" } as r)) -> other_errors_of_r r
+  | Process ((Exited 128 | Stopped _ | Signaled _),
+             ({ r_cmd = "git" } as r))  -> system_errors_of_r r
+  | _                                   -> []
 )
 
 let error_of_exn = Repo.(function
