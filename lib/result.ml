@@ -173,10 +173,9 @@ let pkg_build_error_re = Re.(compile (seq [
   group (rep1 (compl [set "]"]));
 ]))
 
-let no_space_recognizer = let open Re in
-  seq [ (* tested 2013/6/26 *)
-    str "No space left on device";
-  ], (fun m -> System_error No_space)
+let no_space_recognizer = Re.((* tested 2013/6/26 *)
+  str "No space left on device", (fun _ -> System_error No_space)
+)
 
 let compile_pair (re,cons) = (Re.compile re,cons)
 let build_error_stderr_re = Re.(List.map compile_pair [
@@ -342,11 +341,22 @@ let other_errors_of_r { Repo.r_stderr } =
     else []
   with _ -> []
 
+let system_error_stderr_re = Re.(List.map compile_pair [
+  no_space_recognizer;
+])
+let system_errors_of_r { Repo.r_stderr } =
+  try begin match last_match r_stderr system_error_stderr_re with
+    | Some c -> [c]
+    | None -> []
+  end with _ -> []
+
 let analyze = Repo.(function
-  | Process (Exited 3, r) -> solver_errors_of_r r
-  | Process (Exited 4, r) -> build_errors_of_r r
-  | Process (Exited 66,r) -> other_errors_of_r r
-  | _ -> []
+  | Process (Exited 1, r)                 -> system_errors_of_r r
+  | Process (Exited 3, r)                 -> solver_errors_of_r r
+  | Process (Exited 4, r)                 -> build_errors_of_r r
+  | Process (Exited 66,r)                 -> other_errors_of_r r
+  | Process ((Stopped _ | Signaled _), r) -> system_errors_of_r r
+  | _                                     -> []
 )
 
 let error_of_exn = Repo.(function
