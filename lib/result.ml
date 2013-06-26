@@ -245,7 +245,8 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     str "ommand not found";
   ], (fun m -> Command_dep_ext m.(1));
   seq [ (* 2013/6/26 *)
-    str "/bin/sh: ";
+    opt (str "/bin/");
+    str "sh: ";
     opt (seq [rep1 digit; str ": "]);
     group (rep1 (compl [set ":"]));
     str ": ";
