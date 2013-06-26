@@ -173,7 +173,7 @@ let pkg_build_error_re = Re.(compile (seq [
   group (rep1 (compl [set "]"]));
 ]))
 
-let no_space_recognizer =
+let no_space_recognizer = let open Re in
   seq [ (* tested 2013/6/26 *)
     str "No space left on device";
   ], (fun m -> System_error No_space)
@@ -420,8 +420,8 @@ and string_of_analysis_list = function
   | al -> String.concat ", " (List.map string_of_analysis al)
 
 let string_of_status = function
-  | Passed _ -> "PASSED"
-  | Failed (al,_) -> Printf.sprintf "FAILED (%s)" (string_of_analysis_list al)
+  | Passed _ -> "PASS"
+  | Failed (al,_) -> Printf.sprintf "FAIL (%s)" (string_of_analysis_list al)
 
 let to_html ({ status; duration; info } as t) =
   let err, out = to_bufs t in
