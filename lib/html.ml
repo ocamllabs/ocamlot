@@ -100,7 +100,7 @@ let page ?title body =
          .errwarn { background-color: maroon; }
          .incompatible { background-color: gray; }
          .dependency { background-color: yellow; }
-         .fixable { background-color: orange; }
+         .meta { background-color: orange; }
          .transient { background-color: white; }
          .extdep { background-color: blue; }
       </style>

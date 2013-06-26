@@ -268,7 +268,62 @@ let work_url url_str = Lwt_main.run (
     (Uri.of_string url_str)
 )
 
-let infox ()  =
+let triage () = Lwt_main.run begin
+  let { user; repo } = main_repo in
+  let state_path = Serve.state_path_of_github_repo (user, repo) in
+
+  catch (fun () ->
+    Goal.read_tasks state_path
+    >>= fun tasks ->
+    let tasks = Goal.filter_map_tasks (fun task ->
+      match task.Ocamlot.log with
+        | (t,Ocamlot.Completed (wid, ({ Result.status = Failed (reasons, error) }
+                                         as result)))::log ->
+            let report = Result.analyze error in
+            Result.(match triage reasons report with
+              | Stable -> None
+              | x ->
+                  let status = Failed (report, error) in
+                  let result = { result with Result.status } in
+                  let last_event = Ocamlot.Completed (wid, result) in
+                  Some (x, { task with Ocamlot.log = (t,last_event)::log })
+            )
+        | _ -> None
+    ) tasks in
+    let task_path = Filename.concat state_path Goal.task_subpath in
+    let rel_url_of_tid tid =
+      Printf.sprintf "/github/%s/%s/%s/%s"
+        user repo Goal.task_subpath tid
+    in
+    Lwt_list.map_s (fun (tid, action) ->
+      let file = Filename.(concat task_path tid) in
+      match action with
+        | Stable, _ -> return ""
+        | Retry, task ->
+            Repo.rm ~path:file
+            >>= fun _ -> return (Printf.sprintf " * Retry %s <%s>"
+                                   Ocamlot.(string_of_job task.job)
+                                   (rel_url_of_tid tid))
+        | Reclassify (old_analyses, new_analyses), task ->
+            let s = Sexplib.Sexp.to_string (Ocamlot.sexp_of_task task) in
+            Lwt_io.(with_file ~mode:output file (fun oc -> Lwt_io.write oc s))
+            >>= fun () ->
+            Repo.add ~path:file
+            >>= fun _ ->
+            return (Printf.sprintf " * Reclassify %s <%s>\n   from %s\n   to %s"
+                      Ocamlot.(string_of_job task.job)
+                      (rel_url_of_tid tid)
+                      (Result.string_of_analysis_list old_analyses)
+                      (Result.string_of_analysis_list new_analyses))
+    ) tasks
+    >>= fun diffs ->
+    let message = "Triage\n\n"^(String.concat "\n" diffs) in
+    Repo.commit ~dir:Serve.state_path ~message
+    >>= fun _ -> return ()
+  ) (Result.die "Ocamlot_cmd.triage")
+end
+
+let infox () =
   let info = Host.detect () in
   Printf.printf "host: %s\n%!" (Host.to_string info)
 
@@ -335,6 +390,11 @@ let work_cmd =
   Term.(pure work_url $ url),
   Term.info "work" ~doc:"queue for work"
 
+let triage_cmd =
+  Term.(pure triage $ pure ()),
+  Term.info "triage"
+    ~doc:"re-analyze all test results and cull the easy and transient"
+
 let info_cmd =
   Term.(pure infox $ pure ()),
   Term.info "info" ~doc:"show information about this host"
@@ -358,7 +418,7 @@ let default_cmd =
 let cmds = [
   list_cmd; show_cmd; open_cmd;
   build_cmd; mirror_cmd; work_cmd;
-  serve_cmd; info_cmd
+  serve_cmd; info_cmd; triage_cmd;
 ]
 
 let handle_sigpipe _ = Printf.eprintf "SIGPIPE\n%!"

@@ -18,19 +18,10 @@
 open Lwt
 open Ocamlot
 
-type failure_category =
-  | Incompatible
-  | Dependency
-  | Transient
-  | Fixable
-  | Ext_dep
-  | Errorwarn
-  | Broken
-
 type task_status =
   | Pending | Queued
   | Pass
-  | Fail of failure_category list
+  | Fail of Result.category
 
 let state_branch = "paleolithic-01"
 let task_subpath = "task"
@@ -63,39 +54,15 @@ let update_goal ~on_complete goal = function
   | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
-let category_of_analysis = function
-  | Result.Incompatible -> Incompatible
-  | Result.Error_for_warn -> Errorwarn
-  | Result.Pkg_config_dep_ext _
-  | Result.Pkg_config_dep_ext_constraint (_,_)
-  | Result.Header_dep_ext _
-  | Result.C_lib_dep_exts _ -> Ext_dep
-  | Result.Checksum (_,_,_)
-  | Result.Missing_ocamlfind_dep _
-  | Result.Missing_findlib_constraint (_,_) -> Fixable
-  | Result.Broken_link _ -> Transient
-  | Result.No_solution _
-  | Result.Dep_error (_, _) -> Dependency
-
-let worst_of_fails = List.fold_left (max) Incompatible
-
-let class_of_fails fails = match worst_of_fails fails with
+let class_of_category = Result.(function
   | Broken -> "fail"
   | Errorwarn -> "errwarn"
-  | Incompatible -> "incompatible"
+  | Incompat -> "incompatible"
   | Dependency -> "dependency"
-  | Fixable -> "fixable"
+  | Fixable -> "meta"
   | Transient -> "transient"
   | Ext_dep -> "extdep"
-
-let label_of_fails fails = match worst_of_fails fails with
-  | Broken -> "UNKNOWN"
-  | Errorwarn -> "ERRWARN"
-  | Incompatible -> "INCOMPAT"
-  | Dependency -> "DEP"
-  | Fixable -> "EASY"
-  | Transient -> "TRANS"
-  | Ext_dep -> "EXTDEP"
+)
 
 let goal_renderer parent_title parent_uri =
   let render_html event =
@@ -113,9 +80,9 @@ let goal_renderer parent_title parent_uri =
       in
       let task_state task = Result.(match last_event task with
         | (_, Completed (_, { status = Passed _ })) -> Pass
-        | (_, Completed (_, { status = Failed ([],_) })) -> Fail [Broken]
+        | (_, Completed (_, { status = Failed ([],_) })) -> Fail Broken
         | (_, Completed (_, { status = Failed (reason,_)})) ->
-            Fail (List.map category_of_analysis reason)
+            Fail (worst_of_categories (List.map category_of_analysis reason))
         | (_, Started _) | (_, Checked_in _) -> Pending
         | _ -> Queued
       ) in
@@ -126,13 +93,13 @@ let goal_renderer parent_title parent_uri =
               | Fail x, (Pending | Queued | Pass)
               | (Pending | Queued | Pass), Fail x -> Fail x
               | Fail x, Fail y when x=y -> Fail x
-              | Fail x, Fail y -> Fail (x @ y)
+              | Fail x, Fail y -> Fail (Result.worst_of_categories [x ; y])
               | Pending, _ | _, Pending -> Pending
               | Queued, _ | _, Queued -> Queued
               | Pass, Pass -> Pass
           ) Pass trl with
             | Pass -> "pass"
-            | Fail fails -> class_of_fails fails
+            | Fail cat -> class_of_category cat
             | Pending -> "pending"
             | Queued -> "queued"
         in
@@ -140,7 +107,7 @@ let goal_renderer parent_title parent_uri =
           let task = Resource.content tr in
           let task_state_str = match task_state task with
             | Pass -> "PASS"
-            | Fail fails -> label_of_fails fails
+            | Fail cat -> Result.string_of_category cat
             | Pending -> "pending"
             | Queued -> "queued"
           in
@@ -260,14 +227,20 @@ let read_tasks path =
      ) []
   else return []
 
-let write_task dir tr =
+let filter_map_tasks f = List.fold_left (fun lst (tid, old_task) ->
+  match f old_task with
+    | None -> lst
+    | Some x -> (tid, x)::lst
+) []
+
+let commit_task dir tr =
   let uri = Resource.uri tr in
   let uri_str = Uri.to_string uri in
   let task_id = List.hd (List.rev Re_str.(split (regexp_string "/") uri_str)) in
   let (task,_) = Resource.content tr in
   (match List.hd task.Ocamlot.log with
     | (_,Completed (_,r)) -> return r
-    | _ -> fail (Failure "Goal.write_task on uncompleted task")
+    | _ -> fail (Failure "Goal.commit_task on uncompleted task")
   )
   >>= fun result ->
   let message = Printf.sprintf "%s %s\n\n%s"
@@ -278,10 +251,10 @@ let write_task dir tr =
   let buf = Sexplib.Sexp.to_string sexp in
   let filename = Filename.(concat (concat dir task_subpath) task_id) in
   catch (fun () ->
-    Lwt_io.(with_file ~mode:output filename (fun oc -> Lwt_io.write oc buf))
-    >>= fun () ->
     (* TODO: handle exceptions *)
     Lwt_mutex.with_lock Ocamlot.git_state_lock (fun () ->
+      Lwt_io.(with_file ~mode:output filename (fun oc -> Lwt_io.write oc buf))
+      >>= fun () ->
       Repo.add ~path:filename
       >>= fun dir ->
       Repo.commit ~dir ~message
@@ -364,7 +337,7 @@ let make_integration t_resource ~title ~descr ~slug ~min_id ~goal_state_path =
   Util.mkdir_p (Filename.concat goal_state_path task_subpath) 0o700;
   new_goal t_resource integration
     (fun tr () ->
-      write_task goal_state_path tr
+      commit_task goal_state_path tr
       >>= fun () ->
       catch (fun () ->
         Repo.push ~dir:goal_state_path ~branch:state_branch

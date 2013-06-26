@@ -216,6 +216,13 @@ let add ~path =
   ]
   >>= fun _ -> return cwd
 
+let rm ~path =
+  let cwd = Filename.dirname path in
+  run_command ~cwd [
+    "git" ; "rm" ; path ;
+  ]
+  >>= fun _ -> return cwd
+
 let commit ~dir ~message =
   run_command ~cwd:dir [
     "git" ; "commit" ; "-m" ; message ;
