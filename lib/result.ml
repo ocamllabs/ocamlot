@@ -45,6 +45,7 @@ type analysis =
   | Pkg_config_dep_ext of string
   | Pkg_config_dep_ext_constraint of string * string
   | Header_dep_ext of string
+  | Command_dep_ext of string
   | C_lib_dep_exts of string list
   | Missing_ocamlfind_dep of string
   | Missing_findlib_constraint of string * string
@@ -87,6 +88,7 @@ let category_of_analysis = function
   | Pkg_config_dep_ext _
   | Pkg_config_dep_ext_constraint (_,_)
   | Header_dep_ext _
+  | Command_dep_ext _
   | C_lib_dep_exts _ -> Ext_dep
   | Checksum (_,_,_)
   | Missing_ocamlfind_dep _
@@ -117,6 +119,7 @@ let triage prev report =
     | Pkg_config_dep_ext _
     | Pkg_config_dep_ext_constraint (_,_)
     | Header_dep_ext _
+    | Command_dep_ext _
     | C_lib_dep_exts _
     | No_solution _ ->
         if report = prev
@@ -213,6 +216,13 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (compl [set "."]));
     str ".h: No such file or directory";
   ], (fun m -> Header_dep_ext m.(1));
+  seq [ (* *)
+    alt [str "make: "; str "/bin/sh: "];
+    group (rep1 (compl [set ":"]));
+    str ": ";
+    alt [str "C"; str "c"];
+    str "ommand not found";
+  ], (fun m -> Command_dep_ext m.(1));
   seq [ (* tested 2013/6/21 *)
     str "ocamlfind: Package `";
     group (rep1 (compl [set "'"]));
@@ -340,6 +350,7 @@ let rec string_of_analysis = function
   | Pkg_config_dep_ext_constraint (pkg, bound) ->
       "external dependency \""^pkg^"\" must be \""^bound^"\""
   | Header_dep_ext header -> "no external dependency \""^header^".h\""
+  | Command_dep_ext command -> "no external dependency \""^command^"\""
   | C_lib_dep_exts exts -> "no external dependencies: "
       ^(String.concat ", " (List.map (fun ext -> "\""^ext^"\"") exts))
   | Missing_ocamlfind_dep dep -> "missing ocamlfind dependency \""^dep^"\""
