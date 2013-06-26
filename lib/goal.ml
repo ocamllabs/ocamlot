@@ -21,7 +21,7 @@ open Ocamlot
 type task_status =
   | Pending | Queued
   | Pass
-  | Fail of Result.category
+  | Fail of Result.analysis list
 
 let state_branch = "paleolithic-01"
 let task_subpath = "task"
@@ -79,11 +79,14 @@ let goal_renderer parent_title parent_uri =
           | { Opam_task.packages = [ _ ] } -> true
           | _ -> false) trl
       in
+      let cat_of_errs = function
+        | [] -> Result.Broken
+        | errs ->
+            Result.(worst_of_categories (List.map category_of_analysis errs))
+      in
       let task_state task = Result.(match last_event task with
         | (_, Completed (_, { status = Passed _ })) -> Pass
-        | (_, Completed (_, { status = Failed ([],_) })) -> Fail Broken
-        | (_, Completed (_, { status = Failed (reason,_)})) ->
-            Fail (worst_of_categories (List.map category_of_analysis reason))
+        | (_, Completed (_, { status = Failed (reason,_)})) -> Fail reason
         | (_, Started _) | (_, Checked_in _) -> Pending
         | _ -> Queued
       ) in
@@ -94,25 +97,28 @@ let goal_renderer parent_title parent_uri =
               | Fail x, (Pending | Queued | Pass)
               | (Pending | Queued | Pass), Fail x -> Fail x
               | Fail x, Fail y when x=y -> Fail x
-              | Fail x, Fail y -> Fail (Result.worst_of_categories [x ; y])
+              | Fail x, Fail y -> Fail (x @ y)
               | Pending, _ | _, Pending -> Pending
               | Queued, _ | _, Queued -> Queued
               | Pass, Pass -> Pass
           ) Pass trl with
             | Pass -> "pass"
-            | Fail cat -> class_of_category cat
+            | Fail errs -> class_of_category (cat_of_errs errs)
             | Pending -> "pending"
             | Queued -> "queued"
         in
         let cell_link tr =
           let task = Resource.content tr in
-          let task_state_str = match task_state task with
-            | Pass -> "PASS"
-            | Fail cat -> Result.string_of_category cat
-            | Pending -> "pending"
-            | Queued -> "queued"
+          let task_state_str, attrs = match task_state task with
+            | Pass -> "PASS", []
+            | Fail errs ->
+                Result.string_of_category (cat_of_errs errs),
+              ["title", Result.string_of_analysis_list errs]
+            | Pending -> "pending", []
+            | Queued -> "queued", []
           in
-          <:html<<a href="$uri:Resource.uri tr$">$str:task_state_str$</a>&>>
+          <:html<<a href=$uri:Resource.uri tr$
+                    $alist:attrs$>$str:task_state_str$</a>&>>
         in
         let classes, content = match trl with
           | [] -> "", None
