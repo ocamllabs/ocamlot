@@ -29,12 +29,13 @@ type category =
   | Dependency
   | Transient
   | System
-  | Fixable (* Meta *)
+  | Meta
   | Ext_dep
   | Errorwarn
   | Broken
 
 type solver_error =
+  | Incompatible
   | Unsatisfied_dep of string (* TODO: this is pkg + constraint right now *)
 with sexp
 
@@ -42,24 +43,38 @@ type system_error =
   | No_space
 with sexp
 
-type analysis =
-  | No_solution of solver_error option
-  | System_error of system_error
-  | Incompatible
-  | Error_for_warn
+type meta_error =
   | Checksum of Uri.t * string * string
-  | Pkg_config_dep_ext of string
-  | Pkg_config_dep_ext_constraint of string * string
-  | Header_dep_ext of string
-  | Command_dep_ext of string
-  | C_lib_dep_exts of string list
-  | Missing_ocamlfind_dep of string
-  | Missing_findlib_constraint of string * string
-  | Broken_link of Uri.t
-  | Dep_error of string * analysis list
+  | Ocamlfind_dep of string
+  | Findlib_constraint of string * string
 with sexp
 
-type analyses = analysis list with sexp
+type dep_ext_error =
+  | Pkg_config of string
+  | Pkg_config_constraint of string * string
+  | Header of string
+  | Command of string
+  | C_libs of string list
+with sexp
+
+type transient_error =
+  | Broken_link of Uri.t
+with sexp
+
+type build_error =
+  | Error_for_warn
+with sexp
+
+type analysis =
+  | Transient_error of transient_error
+  | System_error of system_error
+  | Meta_error of meta_error
+  | Solver_error of solver_error option
+  | Build_error of build_error
+  | Dep_ext_error of dep_ext_error
+  | Dep_error of string * analysis
+  | Multiple of analysis list
+with sexp
 
 type error =
   | Process of Repo.proc_status * Repo.r
@@ -68,7 +83,7 @@ with sexp
 
 type status =
   | Passed of Repo.r
-  | Failed of analysis list * error
+  | Failed of analysis * error
 with sexp
 
 type t = {
@@ -83,34 +98,29 @@ let get_status {status} = status
 
 let worst_of_categories = List.fold_left (max) Incompat
 
-let category_of_analysis = function
-  | Incompatible -> Incompat
-  | Error_for_warn -> Errorwarn
-  | Pkg_config_dep_ext _
-  | Pkg_config_dep_ext_constraint (_,_)
-  | Header_dep_ext _
-  | Command_dep_ext _
-  | C_lib_dep_exts _ -> Ext_dep
-  | Checksum (_,_,_)
-  | Missing_ocamlfind_dep _
-  | Missing_findlib_constraint (_,_) -> Fixable (* Meta *)
+let rec category_of_analysis = function
+  | Solver_error (Some Incompatible) -> Incompat
+  | Build_error Error_for_warn -> Errorwarn
+  | Dep_ext_error _ -> Ext_dep
+  | Meta_error _ -> Meta
   | System_error _ -> System
-  | Broken_link _ -> Transient
-  | No_solution _
+  | Transient_error _ -> Transient
+  | Solver_error (Some (Unsatisfied_dep _))
   | Dep_error (_, _) -> Dependency
-
-let worst_of_analyses analyses =
-  snd (List.fold_left (fun (mc,m) a ->
+  | Multiple
+and worst_of_analysis = function
+  | Multiple analyses -> snd (List.fold_left (fun (mc,m) a ->
     let c = category_of_analysis a in
     if mc < c then (c,a) else (mc,m)
-  ) (Incompat,Incompatible) analyses)
+  ) (Incompat,Solver_error (Some Incompatible)) analyses)
+  | x -> x
 
 let string_of_category = function
   | Broken -> "ERROR"
   | Errorwarn -> "ERRWARN"
   | Incompat -> "INCOMPAT"
   | Dependency -> "DEP"
-  | Fixable -> "META"
+  | Meta -> "META"
   | System -> "SYSTEM"
   | Transient -> "TRANS"
   | Ext_dep -> "EXTDEP"
