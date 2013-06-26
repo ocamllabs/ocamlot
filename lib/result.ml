@@ -216,7 +216,12 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (compl [set "."]));
     str ".h: No such file or directory";
   ], (fun m -> Header_dep_ext m.(1));
-  seq [ (* *)
+  seq [ (* tested 2013/6/26 *)
+    str ": fatal error: '";
+    group (non_greedy (rep1 any));
+    str ".h' file not found";
+  ], (fun m -> Header_dep_ext m.(1));
+  seq [ (* tested 2013/6/26 *)
     alt [str "make: "; str "/bin/sh: "];
     group (rep1 (compl [set ":"]));
     str ": ";
