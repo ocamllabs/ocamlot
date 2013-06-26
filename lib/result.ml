@@ -246,6 +246,10 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (seq [char ' '; rep1 (compl [space])]));
     str ".";
   ], (fun m -> C_lib_dep_exts Re_str.(split (regexp_string " ") m.(1)));
+  seq [ (* *)
+    str "ld: library not found for -l";
+    group (rep1 notnl);
+  ], (fun m -> C_lib_dep_exts [m.(1)]);
 ])
 
 let rec search k str = function
