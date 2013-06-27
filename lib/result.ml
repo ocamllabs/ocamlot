@@ -256,7 +256,7 @@ let build_error_stdout_re = Re.(List.map compile_pair [
   ], (fun m -> Command_dep_ext m.(1));
   seq [ (* 2013/6/26 *)
     opt (str "/bin/");
-    str "sh: ";
+    alt [str "sh: "; str "env: "];
     opt (seq [rep1 digit; str ": "]);
     group (rep1 (compl [set ":"]));
     str ": ";
