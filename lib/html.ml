@@ -67,20 +67,20 @@ module Table = struct
       | Some prefix ->
         (fun rl -> ["id",prefix^"-"^rl]),
         <:html<<td></td>&>>,
-        (fun rl -> <:html<<td><a href=$str:"#"^prefix^"-"^rl$>#</a></td>&>>)
+        (fun rl -> <:html<<th><a href=$str:"#"^prefix^"-"^rl$>#</a></th>&>>)
       | None -> (fun _ -> []), [], (fun _ -> [])
     in
     let headers = List.map
       (fun h -> <:html<<th>$str:h$</th>&>>) (columns tbl) in
     let rows = List.map (fun (rl,r) ->
-      <:html<<tr $alist:row_attrs rl$>$row_anchor rl$
-      <th>$str:rl$</th>$list:List.map render_cell r$</tr>&>>)
+      <:html<<tr $alist:row_attrs rl$>
+      <th>$str:rl$</th>$list:List.map render_cell r$$row_anchor rl$</tr>&>>)
       (rows tbl) in
     if cell_count tbl > 0
     then <:html<
       <table>
       <thead>
-      <tr>$row_prefix_head$<th></th>$list:headers$</tr>
+      <tr><th></th>$list:headers$$row_prefix_head$</tr>
       </thead>
       <tbody>
       $list:rows$
@@ -116,6 +116,9 @@ let page ?title body =
          .transient { background-color: white; }
          .system { background-color: pink; }
          .extdep { background-color: blue; }
+
+         tbody th { text-align: left; }
+         tbody th a { color: gray; }
       </style>
       <title>$str:page_title$</title>
     </head>
