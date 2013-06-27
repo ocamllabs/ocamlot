@@ -61,11 +61,6 @@ with sexp
 
 type analyses = analysis list with sexp
 
-type triage =
-  | Retry
-  | Reclassify of analyses * analyses
-  | Stable
-
 type error =
   | Process of Repo.proc_status * Repo.r
   | Other of string * string
@@ -111,7 +106,7 @@ let worst_of_analyses analyses =
   ) (Incompat,Incompatible) analyses)
 
 let string_of_category = function
-  | Broken -> "UNKNOWN"
+  | Broken -> "ERROR"
   | Errorwarn -> "ERRWARN"
   | Incompat -> "INCOMPAT"
   | Dependency -> "DEP"
@@ -119,27 +114,6 @@ let string_of_category = function
   | System -> "SYSTEM"
   | Transient -> "TRANS"
   | Ext_dep -> "EXTDEP"
-
-let triage prev report =
-  let rec decide analyses = match worst_of_analyses analyses with
-    | Incompatible
-    | Error_for_warn
-    | Pkg_config_dep_ext _
-    | Pkg_config_dep_ext_constraint (_,_)
-    | Header_dep_ext _
-    | Command_dep_ext _
-    | C_lib_dep_exts _
-    | System_error No_space
-    | No_solution _ ->
-        if report = prev
-        then Stable
-        else Reclassify (prev, report)
-    | Checksum (_,_,_)
-    | Missing_ocamlfind_dep _
-    | Missing_findlib_constraint (_,_)
-    | Broken_link _ -> Retry
-    | Dep_error (_, analyses) -> decide analyses
-  in decide report
 
 let rec match_global ?(pos=0) ?(lst=[]) re s =
   let ofs = try Re.(get_all_ofs (exec ~pos re s))
