@@ -127,13 +127,15 @@ let goal_renderer parent_title parent_uri =
         in
         <:html<<td class=$str:classes$>$opt:content$</td>&>>
       in
-      let tbl = Html.Table.(render (create
-        Opam_task.(fun tr ->
-          match opam_task_of_tr tr with
-            | { packages = pkg::_ } -> Some pkg
-            | { packages = [] } -> None)
-        target_colfn
-        simple_opam_tasks) task_cell)
+      let tbl = Html.Table.(
+        render ~row_anchor_prefix:"all"
+          (create
+             Opam_task.(fun tr ->
+               match opam_task_of_tr tr with
+                 | { packages = pkg::_ } -> Some pkg
+                 | { packages = [] } -> None)
+             target_colfn
+             simple_opam_tasks) task_cell)
       in
       let latest_tasks (_,r) (_,r') =
         let cmp_time m tr =
@@ -145,14 +147,17 @@ let goal_renderer parent_title parent_uri =
         else if Time.(is_later (elapsed r_tmax r'_tmax)) then 1
         else 0
       in
-      let done_tbl = Html.Table.(render (create ~sortfn:latest_tasks
-        (fun tr ->
-          let packages = (opam_task_of_tr tr).Opam_task.packages in
-          match last_event (Resource.content tr), packages with
-            | (_, (Completed (_,_) | Started _ | Checked_in _)), pkg::_ -> Some pkg
-            | _ -> None)
-        target_colfn
-        simple_opam_tasks) task_cell)
+      let done_tbl = Html.Table.(
+        render ~row_anchor_prefix:"latest"
+          (create ~sortfn:latest_tasks
+             (fun tr ->
+               let packages = (opam_task_of_tr tr).Opam_task.packages in
+               match last_event (Resource.content tr), packages with
+                 | (_, (Completed (_,_) | Started _ | Checked_in _)), pkg::_ ->
+                     Some pkg
+                 | _ -> None)
+             target_colfn
+             simple_opam_tasks) task_cell)
       in
       let other_task_list = Html.ul (List.map (fun tr ->
         let task = Resource.content tr in
@@ -163,8 +168,13 @@ let goal_renderer parent_title parent_uri =
           : $str:string_of_job task.job$
         </a>&>>
       ) other_tasks) in
+      (*       <h3 id="dep-severity">Dependency Error Severity</h3>
+               $dep_tbl$
+      *)
       <:html<
+      <h3 id="latest-tasks">Latest Results</h3>
       $done_tbl$
+      <h3 id="all-tasks">All Tasks</h3>
       $tbl$
       $if List.length other_tasks > 0
        then other_task_list
