@@ -269,6 +269,10 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     str "ld: library not found for -l";
     group (rep1 notnl);
   ], (fun m -> C_lib_dep_exts [m.(1)]);
+  seq [ (* tested 2013/6/28 *)
+    str "ld: cannot find -l";
+    group (rep1 notnl);
+  ], (fun m -> C_lib_dep_exts [m.(1)]);
   no_space_recognizer;
 ])
 
