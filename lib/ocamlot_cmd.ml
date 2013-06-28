@@ -288,9 +288,10 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
         | Fixable, _ -> meta
         | Transient, _ -> transient
         | System, _ -> system
+        | _, Dep_error (pkg,[])
+        | _, No_solution (Some (Unsatisfied_dep pkg)) -> StringSet.mem pkg retry
         | _, Dep_error (pkg,analyses) ->
             List.exists (retry_p [pkg]) analyses
-        | _, No_solution (Some (Unsatisfied_dep pkg)) -> StringSet.mem pkg retry
         | (Incompat | Dependency | Ext_dep | Errorwarn | Broken), _ -> false
   in
   catch (fun () ->
