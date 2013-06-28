@@ -228,6 +228,11 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     alt [str "C"; str "c"];
     str "ommand not found";
   ], (fun m -> Command_dep_ext m.(1));
+  seq [ (* tested 2013/6/28 *)
+    str "configure: error: '";
+    group (rep1 (compl [set "'"]));
+    str "' command not found";
+  ], (fun m -> Command_dep_ext m.(1));
   seq [ (* 2013/6/26 *)
     opt (str "/bin/");
     alt [str "sh: "; str "env: "];
