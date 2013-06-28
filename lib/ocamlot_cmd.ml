@@ -282,17 +282,17 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
     | _ -> StringSet.mem x domain_set in
   let { user; repo } = main_repo in
   let state_path = Serve.state_path_of_github_repo (user, repo) in
+  let retry_pkgs_p = List.exists ((flip StringSet.mem) retry) in
   let rec retry_p pkgs analysis =
-    (List.exists ((flip StringSet.mem) retry) pkgs)
-    || match category_of_analysis analysis, analysis with
-        | Fixable, _ -> meta
-        | Transient, _ -> transient
-        | System, _ -> system
-        | _, Dep_error (pkg,[])
-        | _, No_solution (Some (Unsatisfied_dep pkg)) -> StringSet.mem pkg retry
-        | _, Dep_error (pkg,analyses) ->
-            List.exists (retry_p [pkg]) analyses
-        | (Incompat | Dependency | Ext_dep | Errorwarn | Broken), _ -> false
+    match category_of_analysis analysis, analysis with
+      | Fixable, _ -> meta
+      | Transient, _ -> transient
+      | System, _ -> system
+      | _, Dep_error (pkg,[])
+      | _, No_solution (Some (Unsatisfied_dep pkg)) -> StringSet.mem pkg retry
+      | _, Dep_error (pkg,analyses) ->
+          retry_pkgs_p [pkg] || List.exists (retry_p [pkg]) analyses
+      | (Incompat | Dependency | Ext_dep | Errorwarn | Broken), _ -> false
   in
   catch (fun () ->
     Goal.read_tasks state_path
@@ -310,7 +310,7 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
               let result = { result with Result.status } in
               let last_event = Ocamlot.Completed (wid, result) in
               let task = { task with Ocamlot.log = (t,last_event)::log } in
-              if List.exists (retry_p packages) report
+              if retry_pkgs_p packages || List.exists (retry_p packages) report
               then Some (Retry task)
               else if report <> reasons
               then Some (Reclassify (task, reasons, report))
