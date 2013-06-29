@@ -108,12 +108,12 @@ let page ?title body =
       <link rel='stylesheet' type='text/css' href="$uri:style$"/>
       <style type='text/css'>
          .pass { background-color: green; }
-         .fail { background-color: red; }
+         .error { background-color: red; }
          .errwarn { background-color: maroon; }
-         .incompatible { background-color: gray; }
-         .dependency { background-color: yellow; }
+         .incompat { background-color: gray; }
+         .dep { background-color: yellow; }
          .meta { background-color: orange; }
-         .transient { background-color: white; }
+         .trans { background-color: white; }
          .system { background-color: pink; }
          .extdep { background-color: blue; }
 
