@@ -271,7 +271,7 @@ let work_url url_str = Lwt_main.run (
 module StringSet = Set.Make(String)
 type triage =
   | Retry of Ocamlot.task
-  | Reclassify of Ocamlot.task * Result.analyses * Result.analyses
+  | Reclassify of Ocamlot.task * Result.analysis * Result.analysis
 let flip f a b = f b a
 let triage dryrun meta transient system retry domain = Lwt_main.run begin
   let enset = List.fold_left (flip StringSet.add) StringSet.empty in
@@ -284,15 +284,15 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
   let state_path = Serve.state_path_of_github_repo (user, repo) in
   let retry_pkgs_p = List.exists ((flip StringSet.mem) retry) in
   let rec retry_p pkgs analysis =
-    match category_of_analysis analysis, analysis with
-      | Fixable, _ -> meta
-      | Transient, _ -> transient
-      | System, _ -> system
-      | _, Dep_error (pkg,[])
-      | _, No_solution (Some (Unsatisfied_dep pkg)) -> StringSet.mem pkg retry
-      | _, Dep_error (pkg,analyses) ->
-          retry_pkgs_p [pkg] || List.exists (retry_p [pkg]) analyses
-      | (Incompat | Dependency | Ext_dep | Errorwarn | Broken), _ -> false
+    retry_pkgs_p pkgs || match analysis with
+      | Meta _ -> meta
+      | Transient _ -> transient
+      | System _ -> system
+      | Solver (Some (Unsatisfied_dep pkg)) -> StringSet.mem pkg retry
+      | Dep (pkg,analysis) -> retry_p [pkg] analysis
+      | Ext_dep _ | Build _ | Multiple []
+      | Solver (None | Some Incompatible) -> false
+      | Multiple al -> List.exists (retry_p pkgs) al
   in
   catch (fun () ->
     Goal.read_tasks state_path
@@ -310,7 +310,7 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
               let result = { result with Result.status } in
               let last_event = Ocamlot.Completed (wid, result) in
               let task = { task with Ocamlot.log = (t,last_event)::log } in
-              if retry_pkgs_p packages || List.exists (retry_p packages) report
+              if retry_p packages report
               then Some (Retry task)
               else if report <> reasons
               then Some (Reclassify (task, reasons, report))
@@ -333,7 +333,7 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
             return (Printf.sprintf " * Retry %s <%s>"
                       Ocamlot.(string_of_job task.job)
                       (rel_url_of_tid tid))
-        | Reclassify (task, old_analyses, new_analyses) ->
+        | Reclassify (task, old_analysis, new_analysis) ->
             let s = Sexplib.Sexp.to_string (Ocamlot.sexp_of_task task) in
             (if dryrun then return ()
              else Lwt_io.(with_file ~mode:output file
@@ -344,8 +344,8 @@ let triage dryrun meta transient system retry domain = Lwt_main.run begin
             return (Printf.sprintf " * Reclassify %s <%s>\n   from %s\n   to %s"
                       Ocamlot.(string_of_job task.job)
                       (rel_url_of_tid tid)
-                      (Result.string_of_analysis_list old_analyses)
-                      (Result.string_of_analysis_list new_analyses))
+                      (Result.string_of_analysis old_analysis)
+                      (Result.string_of_analysis new_analysis))
     ) tasks
     >>= fun diffs ->
     let cmd = String.concat " " (Array.to_list Sys.argv) in
