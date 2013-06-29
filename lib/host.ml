@@ -40,12 +40,16 @@ type os =
   | Other of string
 with sexp
 
+type arm =
+  | V5tel
+  | V6l
+with sexp
+
 type arch =
   | X86_64
   | I386
   | I686
-  | Armv5tel
-  | Armv6l
+  | Arm of arm
   | PPC64
   | Powerpc
   | Unknown
@@ -108,8 +112,8 @@ let string_of_arch = function
   | X86_64 -> "x86_64"
   | I386 -> "i386"
   | I686 -> "i686"
-  | Armv5tel -> "armv5tel"
-  | Armv6l -> "armv6l"
+  | Arm V5tel -> "armv5tel"
+  | Arm V6l -> "armv6l"
   | PPC64 -> "ppc64"
   | Powerpc -> "powerpc"
   | Unknown -> "unknown"
@@ -119,11 +123,11 @@ let arch_of_string_opt = function
   | Some "amd64" -> X86_64
   | Some "i386" -> I386
   | Some "i686" -> I686
-  | Some "armv5tel" -> Armv5tel
+  | Some "armv5tel" -> Arm V5tel
+  | Some "armv6l" -> Arm V6l
   | Some "ppc64" -> PPC64
   | Some "powerpc" -> Powerpc
   | Some "macppc" -> Powerpc
-  | Some "armv6l" -> Armv6l
   | Some _ | None -> Unknown
 
 let to_string { os; arch } =

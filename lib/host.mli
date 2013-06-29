@@ -21,12 +21,16 @@ type os =
   | Other of string
 with sexp
 
+type arm =
+  | V5tel
+  | V6l
+with sexp
+
 type arch =
   | X86_64
   | I386
   | I686
-  | Armv5tel
-  | Armv6l
+  | Arm of arm
   | PPC64
   | Powerpc
   | Unknown
