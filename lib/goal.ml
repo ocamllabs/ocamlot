@@ -21,7 +21,7 @@ open Ocamlot
 type task_status =
   | Pending | Queued
   | Pass
-  | Fail of Result.analysis list
+  | Fail of Result.analysis
 
 let state_branch = "paleolithic-01"
 let task_subpath = "task"
@@ -54,17 +54,6 @@ let update_goal ~on_complete goal = function
   | New_subgoal gr -> update_goal_subgoal goal (New_subgoal gr)
   | Update_subgoal (_, subgoal_event) -> update_goal_subgoal goal subgoal_event
 
-let class_of_category = Result.(function
-  | Broken -> "fail"
-  | Errorwarn -> "errwarn"
-  | Incompat -> "incompatible"
-  | Dependency -> "dependency"
-  | Fixable -> "meta"
-  | Transient -> "transient"
-  | System -> "system"
-  | Ext_dep -> "extdep"
-)
-
 let goal_renderer parent_title parent_uri =
   let render_html event =
     let render_tasks_table trl =
@@ -79,11 +68,6 @@ let goal_renderer parent_title parent_uri =
           | { Opam_task.packages = [ _ ] } -> true
           | _ -> false) trl
       in
-      let cat_of_errs = function
-        | [] -> Result.Broken
-        | errs ->
-            Result.(worst_of_categories (List.map category_of_analysis errs))
-      in
       let task_state task = Result.(match last_event task with
         | (_, Completed (_, { status = Passed _ })) -> Pass
         | (_, Completed (_, { status = Failed (reason,_)})) -> Fail reason
@@ -97,13 +81,13 @@ let goal_renderer parent_title parent_uri =
               | Fail x, (Pending | Queued | Pass)
               | (Pending | Queued | Pass), Fail x -> Fail x
               | Fail x, Fail y when x=y -> Fail x
-              | Fail x, Fail y -> Fail (x @ y)
+              | Fail x, Fail y -> Fail (Result.Multiple [x; y])
               | Pending, _ | _, Pending -> Pending
               | Queued, _ | _, Queued -> Queued
               | Pass, Pass -> Pass
           ) Pass trl with
             | Pass -> "pass"
-            | Fail errs -> class_of_category (cat_of_errs errs)
+            | Fail err -> Result.class_string_of_analysis err
             | Pending -> "pending"
             | Queued -> "queued"
         in
@@ -111,9 +95,9 @@ let goal_renderer parent_title parent_uri =
           let task = Resource.content tr in
           let task_state_str, attrs = match task_state task with
             | Pass -> "PASS", []
-            | Fail errs ->
-                Result.string_of_category (cat_of_errs errs),
-              ["title", Result.string_of_analysis_list errs]
+            | Fail err ->
+                String.uppercase (Result.class_string_of_analysis err),
+              ["title", Result.string_of_analysis err]
             | Pending -> "pending", []
             | Queued -> "queued", []
           in
