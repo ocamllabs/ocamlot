@@ -56,6 +56,7 @@ type analysis =
   | Missing_ocamlfind_dep of string
   | Missing_findlib_constraint of string * string
   | Broken_link of Uri.t
+  | Opam_metadata_retrieval of Uri.t
   | Dep_error of string * analysis list
 with sexp
 
@@ -95,6 +96,7 @@ let category_of_analysis = function
   | Missing_ocamlfind_dep _
   | Missing_findlib_constraint (_,_) -> Fixable (* Meta *)
   | System_error _ -> System
+  | Opam_metadata_retrieval _
   | Broken_link _ -> Transient
   | No_solution _
   | Dep_error (_, _) -> Dependency
@@ -325,6 +327,11 @@ let other_errors_of_r { Repo.r_stderr } =
   with _ -> []
 
 let system_error_stderr_re = Re.(List.map compile_pair [
+  seq [ (* tested 2013/6/29 *)
+    str "Cannot download ";
+    group (non_greedy (rep1 any));
+    str ", please check your connection settings.";
+  ], (fun m -> Opam_metadata_retrieval (Uri.of_string m.(1)));
   no_space_recognizer;
 ])
 let system_errors_of_r { Repo.r_stderr } =
@@ -409,6 +416,7 @@ let rec string_of_analysis = function
   | Missing_findlib_constraint (pkg, bound) ->
       "missing findlib constraint \""^pkg^" "^bound^"\""
   | System_error sys_err -> "system error: "^(string_of_system_error sys_err)
+  | Opam_metadata_retrieval uri
   | Broken_link uri -> "could not retrieve <"^(Uri.to_string uri)^">"
   | Dep_error (dep, subanalyses) ->
       Printf.sprintf "error in dependency \"%s\" (%s)"
