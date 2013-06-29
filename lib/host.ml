@@ -17,9 +17,19 @@
 
 open Sexplib.Std
 
+type linux =
+  | Suse
+  | RedHat
+  | Fedora
+  | Slackware
+  | Debian
+  | Gentoo
+  | Ubuntu
+with sexp
+
 type os =
   | Darwin
-  | Linux
+  | Linux of linux option
   | FreeBSD
   | OpenBSD
   | NetBSD
@@ -63,8 +73,15 @@ type t = {
 (* TODO: differences? compatibilities? worth it? *)
 
 let string_of_os = function
+  | Linux None             -> "Linux"
+  | Linux (Some Suse)      -> "SUSE Linux"
+  | Linux (Some RedHat)    -> "Red Hat Linux"
+  | Linux (Some Fedora)    -> "Fedora Linux"
+  | Linux (Some Slackware) -> "Slackware Linux"
+  | Linux (Some Debian)    -> "Debian Linux"
+  | Linux (Some Gentoo)    -> "Gentoo Linux"
+  | Linux (Some Ubuntu)    -> "Ubuntu Linux"
   | Darwin -> "Darwin"
-  | Linux -> "Linux"
   | FreeBSD -> "FreeBSD"
   | OpenBSD -> "OpenBSD"
   | NetBSD -> "NetBSD"
@@ -76,7 +93,7 @@ let string_of_os = function
 
 let os_of_string_opt = function
   | Some "Darwin" -> Darwin
-  | Some "Linux" -> Linux
+  | Some "Linux" -> Linux None
   | Some "FreeBSD" -> FreeBSD
   | Some "OpenBSD" -> OpenBSD
   | Some "NetBSD" -> NetBSD

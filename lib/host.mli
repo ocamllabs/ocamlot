@@ -1,6 +1,16 @@
+type linux =
+  | Suse
+  | RedHat
+  | Fedora
+  | Slackware
+  | Debian
+  | Gentoo
+  | Ubuntu
+with sexp
+
 type os =
   | Darwin
-  | Linux
+  | Linux of linux option
   | FreeBSD
   | OpenBSD
   | NetBSD
