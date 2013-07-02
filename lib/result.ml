@@ -356,7 +356,7 @@ let analyze = Repo.(function
 
 let error_of_exn = Repo.(function
   | ProcessError (status, r) -> Process (status, r)
-  | exn -> Other (string_of_sexp (sexp_of_exn exn),
+  | exn -> Other (Sexplib.Sexp.to_string (sexp_of_exn exn),
                   if Printexc.backtrace_status ()
                   then "Backtrace:\n"^(Printexc.get_backtrace ())
                   else "No backtrace available.")
