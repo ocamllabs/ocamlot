@@ -235,9 +235,9 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (compl [set "'"]));
     str "' command not found";
   ], (fun m -> Command_dep_ext m.(1));
-  seq [ (* 2013/6/26 *)
+  seq [ (* 2013/7/3 *)
     opt (str "/bin/");
-    alt [str "sh: "; str "env: "];
+    alt [str "sh: "; str "env: "; str "make: "];
     opt (seq [rep1 digit; str ": "]);
     group (rep1 (compl [set ":"]));
     str ": ";
