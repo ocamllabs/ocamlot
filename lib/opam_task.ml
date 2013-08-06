@@ -136,7 +136,9 @@ let opam_config_env_extractor =
     bol;
     group (rep1 (compl [set "="]));
     char '=';
-    group (rep (compl [set ";"]));
+    opt (char '"');
+    group (rep (compl [set ";\""]));
+    opt (char '"');
     char ';'; non_greedy (rep any); eol;
   ]))
 let opam_env ?(debug=false) ~path home opam_dir =
@@ -165,7 +167,6 @@ let opam_env ?(debug=false) ~path home opam_dir =
 let initialize_opam ~env ~cwd ~jobs =
   Repo.run_command ~env ~cwd
     [ "opam"; "init"; "--no-setup"; "-j"; string_of_int jobs ]
-  >>= fun _ -> return ()
 
 let add_opam_repository ~env ~cwd name dir =
   Repo.run_command ~env ~cwd
@@ -267,7 +268,7 @@ let run ?(debug=false) ?jobs prefix root_dir ocaml_dir
               (fun oc -> write oc ocamlfind_not_found))
     >>= fun () ->
     initialize_opam ~env ~cwd:tmp_name ~jobs
-    >>= fun () ->
+    >>= fun _r ->
     opam_env ~debug ~path tmp_name opam_root
     >>= fun env ->
     Repo.run_command ~env:(make_env env) ~cwd:tmp_name
