@@ -1,5 +1,16 @@
 # OCamlot : OCaml Online Testing
 
+OCamlot (OCaml Online Testing), is a Continuous Integration and Testing
+system for packages provided via OPAM. It comprises all the appropriate
+tools and libraries to enable management and development of the machine
+infrastructure, for example an OCaml library to interface with Github
+(available through OPAM). If you submit a package via OPAM, you will be
+rewarded with regular regression tests across many diverse operating systems
+and build tool environments. Ultimately, we would also like to integrate
+benchmarking, constraint exploration, experimental design, complete
+isolation, and domain testing into this system.
+
+
 ## Usage
 
 ### Server
