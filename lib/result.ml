@@ -40,6 +40,7 @@ with sexp
 
 type system_error =
   | No_space
+  | Worker_is_root
 with sexp
 
 type analysis =
@@ -153,6 +154,10 @@ let no_space_recognizer = Re.((* tested 2013/6/26 *)
   str "No space left on device", (fun _ -> System_error No_space)
 )
 
+let configure_must_not_run_as_root = Re.(
+  str "configure script must not be run with root user", (fun _ -> System_error Worker_is_root)
+)
+
 let compile_pair (re,cons) = (Re.compile re,cons)
 let build_error_stderr_re = Re.(List.map compile_pair [
   seq [ (* tested 2013/6/21 *)
@@ -194,6 +199,7 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     str "\": command not found.";
   ], (fun m -> Command_dep_ext m.(1));
   no_space_recognizer;
+  configure_must_not_run_as_root;
 ])
 
 let build_error_stdout_re = Re.(List.map compile_pair [
@@ -276,6 +282,7 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 notnl);
   ], (fun m -> C_lib_dep_exts [m.(1)]);
   no_space_recognizer;
+  configure_must_not_run_as_root;
 ])
 
 let rec search k str = function
@@ -317,7 +324,7 @@ let incompatible_error_re = Re.(compile (seq [
   (* tested 2013/6/21 *)
   bol; str "Version "; rep1 (compl [space]);
   str " of \""; rep1 (compl [set "\""]);
-  str "\" is incompatible";
+  str "\" is not available for your compiler or your OS";
 ]))
 let other_errors_of_r { Repo.r_stderr } =
   try
@@ -333,6 +340,7 @@ let system_error_stderr_re = Re.(List.map compile_pair [
     str ", please check your connection settings.";
   ], (fun m -> Opam_metadata_retrieval (Uri.of_string m.(1)));
   no_space_recognizer;
+  configure_must_not_run_as_root;
 ])
 let system_errors_of_r { Repo.r_stderr } =
   try begin match last_match r_stderr system_error_stderr_re with
@@ -397,6 +405,7 @@ let die site exn =
 
 let string_of_system_error = function
   | No_space -> "storage exhausted"
+  | Worker_is_root -> "worker running as root user"
 
 let rec string_of_analysis = function
   | No_solution None -> "no constraint solution"
