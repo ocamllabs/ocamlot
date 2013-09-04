@@ -152,7 +152,8 @@ let no_space_recognizer = Re.((* tested 2013/6/26 *)
 )
 
 let configure_must_not_run_as_root = Re.(
-  str "configure script must not be run with root user", (fun _ -> System_error Worker_is_root)
+  str "configure script must not be run with root user",
+  (fun _ -> System Worker_is_root)
 )
 
 let compile_pair (re,cons) = (Re.compile re,cons)
@@ -335,7 +336,7 @@ let system_error_stderr_re = Re.(List.map compile_pair [
     str "Cannot download ";
     group (non_greedy (rep1 any));
     str ", please check your connection settings.";
-  ], (fun m -> Opam_metadata (Uri.of_string m.(1)));
+  ], (fun m -> Transient (Opam_metadata (Uri.of_string m.(1))));
   no_space_recognizer;
   configure_must_not_run_as_root;
 ])
