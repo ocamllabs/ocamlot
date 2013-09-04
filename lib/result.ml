@@ -33,6 +33,7 @@ with sexp
 (* ordered minor to severe *)
 type system_error =
   | No_space
+  | Worker_is_root
 with sexp
 
 (* ordered minor to severe *)
@@ -54,6 +55,7 @@ with sexp
 (* ordered minor to severe *)
 type transient_error =
   | Broken_link of Uri.t
+  | Opam_metadata of Uri.t
 with sexp
 
 (* ordered minor to severe *)
@@ -149,6 +151,10 @@ let no_space_recognizer = Re.((* tested 2013/6/26 *)
   str "No space left on device", (fun _ -> System No_space)
 )
 
+let configure_must_not_run_as_root = Re.(
+  str "configure script must not be run with root user", (fun _ -> System_error Worker_is_root)
+)
+
 let compile_pair (re,cons) = (Re.compile re,cons)
 let build_error_stderr_re = Re.(List.map compile_pair [
   seq [ (* tested 2013/6/21 *)
@@ -190,6 +196,7 @@ let build_error_stderr_re = Re.(List.map compile_pair [
     str "\": command not found.";
   ], (fun m -> Ext_dep (Command m.(1)));
   no_space_recognizer;
+  configure_must_not_run_as_root;
 ])
 
 let build_error_stdout_re = Re.(List.map compile_pair [
@@ -231,9 +238,9 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 (compl [set "'"]));
     str "' command not found";
   ], (fun m -> Ext_dep (Command m.(1)));
-  seq [ (* 2013/6/26 *)
+  seq [ (* tested 2013/7/3 *)
     opt (str "/bin/");
-    alt [str "sh: "; str "env: "];
+    alt [str "sh: "; str "env: "; str "make: "];
     opt (seq [rep1 digit; str ": "]);
     group (rep1 (compl [set ":"]));
     str ": ";
@@ -272,6 +279,7 @@ let build_error_stdout_re = Re.(List.map compile_pair [
     group (rep1 notnl);
   ], (fun m -> Ext_dep (C_libs [m.(1)]));
   no_space_recognizer;
+  configure_must_not_run_as_root;
 ])
 
 let rec search k str = function
@@ -313,7 +321,7 @@ let incompatible_error_re = Re.(compile (seq [
   (* tested 2013/6/21 *)
   bol; str "Version "; rep1 (compl [space]);
   str " of \""; rep1 (compl [set "\""]);
-  str "\" is incompatible";
+  str "\" is not available for your compiler or your OS";
 ]))
 let other_errors_of_r { Repo.r_stderr } =
   try
@@ -323,7 +331,13 @@ let other_errors_of_r { Repo.r_stderr } =
   with _ -> Multiple []
 
 let system_error_stderr_re = Re.(List.map compile_pair [
+  seq [ (* tested 2013/6/29 *)
+    str "Cannot download ";
+    group (non_greedy (rep1 any));
+    str ", please check your connection settings.";
+  ], (fun m -> Opam_metadata (Uri.of_string m.(1)));
   no_space_recognizer;
+  configure_must_not_run_as_root;
 ])
 let system_errors_of_r { Repo.r_stderr } =
   try begin match last_match r_stderr system_error_stderr_re with
@@ -347,7 +361,7 @@ let analyze = Repo.(function
 
 let error_of_exn = Repo.(function
   | ProcessError (status, r) -> Process (status, r)
-  | exn -> Other (string_of_sexp (sexp_of_exn exn),
+  | exn -> Other (Sexplib.Sexp.to_string (sexp_of_exn exn),
                   if Printexc.backtrace_status ()
                   then "Backtrace:\n"^(Printexc.get_backtrace ())
                   else "No backtrace available.")
@@ -388,6 +402,7 @@ let die site exn =
 
 let string_of_system_error = function
   | No_space -> "storage exhausted"
+  | Worker_is_root -> "worker running as root user"
 
 let rec string_of_analysis = function
   | Solver None -> "no constraint solution"
@@ -407,10 +422,12 @@ let rec string_of_analysis = function
   | Meta (Findlib_constraint (pkg, bound)) ->
       "missing findlib constraint \""^pkg^" "^bound^"\""
   | System sys_err -> "system error: "^(string_of_system_error sys_err)
-  | Transient (Broken_link uri) -> "could not retrieve <"^(Uri.to_string uri)^">"
+  | Transient (Broken_link uri)
+  | Transient (Opam_metadata uri) ->
+    "could not retrieve <"^(Uri.to_string uri)^">"
   | Dep (dep, subanalysis) ->
-      Printf.sprintf "error in dependency \"%s\" (%s)"
-        dep (string_of_analysis subanalysis)
+    Printf.sprintf "error in dependency \"%s\" (%s)"
+      dep (string_of_analysis subanalysis)
   | Multiple [] -> "unknown"
   | Multiple al -> String.concat ", " (List.map string_of_analysis al)
 

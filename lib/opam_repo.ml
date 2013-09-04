@@ -63,7 +63,7 @@ let pkg_descr_re = pkg_change_re pkg_descr
 let pkg_semantic = Re.(alt [
   str "/opam";
   str "/url";
-  seq [str "/files/"; non_greedy (rep1 any); str ".install"; eos];
+  seq [str "/files/"; rep1 any];
 ])
 let pkg_sem_re = pkg_change_re pkg_semantic
 
